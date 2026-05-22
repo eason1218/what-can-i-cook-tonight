@@ -1,0 +1,20 @@
+# Core model + recommender
+pymc>=6.0.1
+arviz>=1.1.0
+nutpie>=0.16.10
+numpy>=2.1
+pandas>=2.2
+scipy>=1.16
+inflect>=7.5
+
+# Visualization
+matplotlib>=3.10
+seaborn>=0.13
+
+# Data preparation (downloads Food.com)
+kagglehub>=1.0
+
+# Notebooks (optional: to run / re-execute the .ipynb files)
+jupyter
+nbconvert
+ipykernel

@@ -1,0 +1,5 @@
+* text=auto
+*.png binary
+*.pkl binary
+*.csv text
+*.ipynb text

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs & notebook exports (regenerable)
+*.log
+*.html
+
+# Large generated artifacts — regenerate with prepare_data.py / run_demo.py
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+
+# (figures/ are intentionally committed: small, and needed for the README to render)
