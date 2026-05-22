@@ -14,8 +14,8 @@ Thumbs.db
 *.log
 *.html
 
-# Large generated artifacts — regenerate with prepare_data.py / run_demo.py
-model/recipes_clean.csv
-model/lda_model.pkl
+# Large generated artifacts — regenerate with src/prepare_data.py / src/run_demo.py
+model/data/recipes_clean.csv
+model/models/lda_model.pkl
 
-# (model/fig*.png + pipeline_flowchart.png ARE committed: small, needed for the README)
+# (model/figures/*.png ARE committed: small, needed for the README to render)

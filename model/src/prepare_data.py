@@ -1,7 +1,7 @@
 """
 prepare_data.py
 ===============
-Download the Food.com dataset via kagglehub and emit `recipes_clean.csv` with the
+Download the Food.com dataset via kagglehub and emit `data/recipes_clean.csv` with the
 schema the recommender expects:
 
     recipe_id, recipe_name, ingredients (JSON list of standardized names),
@@ -25,7 +25,7 @@ from recipe_recommender import _coerce_ingredients, normalize_token
 
 MIN_RATINGS = 5
 MIN_INGR, MAX_INGR = 2, 35
-OUT_PATH = "recipes_clean.csv"
+OUT_PATH = "data/recipes_clean.csv"
 
 
 def _download() -> str:

@@ -216,7 +216,7 @@ class LDAModel:
         return self.phi_samples.shape[0]
 
 
-def save_model(model: LDAModel, path: str = "lda_model.pkl") -> None:
+def save_model(model: LDAModel, path: str = "models/lda_model.pkl") -> None:
     """Persist the fitted posterior (drops the heavy InferenceData)."""
     import pickle
     payload = {
@@ -236,7 +236,7 @@ def save_model(model: LDAModel, path: str = "lda_model.pkl") -> None:
         pickle.dump(payload, f)
 
 
-def load_model(path: str = "lda_model.pkl") -> LDAModel:
+def load_model(path: str = "models/lda_model.pkl") -> LDAModel:
     """Load a model saved by save_model (so recommend() needn't retrain)."""
     import pickle
     with open(path, "rb") as f:
@@ -859,7 +859,7 @@ def recommend(user_ingredients: list[str], df: pd.DataFrame,
               must_use: list[str] | None = None,
               diet: str | None = None,
               diversity: float = 0.0,
-              retrain: bool = False, model_path: str = "lda_model.pkl",
+              retrain: bool = False, model_path: str = "models/lda_model.pkl",
               **train_kwargs) -> list[dict]:
     """Top-N recipes the user can make tonight.
 
@@ -911,7 +911,7 @@ if __name__ == "__main__":
     import argparse
 
     ap = argparse.ArgumentParser(description="Bayesian LDA recipe recommender demo")
-    ap.add_argument("--data", default="recipes_clean.csv",
+    ap.add_argument("--data", default="data/recipes_clean.csv",
                     help="cleaned recipe CSV (cols: recipe_id, recipe_name, "
                          "ingredients, avg_rating, n_ratings)")
     ap.add_argument("--ingredients", nargs="+",

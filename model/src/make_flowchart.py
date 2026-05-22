@@ -1,4 +1,4 @@
-"""make_flowchart.py — render the end-to-end pipeline diagram to pipeline_flowchart.png.
+"""make_flowchart.py — render the end-to-end pipeline diagram to figures/pipeline_flowchart.png.
 Horizontal (16:9), English, polished. Pure matplotlib. Run: python make_flowchart.py"""
 import matplotlib
 matplotlib.use("Agg")
@@ -75,13 +75,13 @@ ax.text(9, 42.5, "ONLINE  ·  answer a query (reuses the posterior)", fontsize=1
 YO = 62
 box(22, YO, 28, 13, "Food.com data", "RAW_recipes\n+ RAW_interactions", GREY_F, GREY_E)
 harrow(36.5, 41.5, YO, label="prepare_data.py")
-box(55, YO, 26, 13, "recipes_clean.csv", "53,573 recipes", GREY_F, GREY_E)
+box(55, YO, 26, 13, "data/recipes_clean.csv", "53,573 recipes", GREY_F, GREY_E)
 harrow(68.5, 74.5, YO)
 box(99, YO, 42, 15, "train_lda", "Bayesian LDA via NUTS  (z marginalized)\n"
     "choose K by held-out predictive lppd\nrefit best K on the full corpus",
     BLUE_F, BLUE_E, badge=1, fs_t=12)
 harrow(120.5, 126.5, YO)
-box(140, YO, 26, 14, "posterior φ", "samples (S×K×V)\nlda_model.pkl", GOLD_F, GOLD_E,
+box(140, YO, 26, 14, "posterior φ", "samples (S×K×V)\nmodels/lda_model.pkl", GOLD_F, GOLD_E,
     fs_t=12, tcol="#7a5400")
 
 # ---- bridge: model feeds the online steps --------------------------------
@@ -113,9 +113,11 @@ box(140, 9.5, 32, 7.5, "Top-N recommendations with uncertainty", "", OUT_F, OUT_
 
 # ---- caption -------------------------------------------------------------
 ax.text(80, 1.8, "Steps 1–5 of the pipeline.  Offline training is cached in "
-        "lda_model.pkl; every online query reuses the posterior, so uncertainty "
+        "models/lda_model.pkl; every online query reuses the posterior, so uncertainty "
         "propagates to each recommendation.",
         ha="center", fontsize=8.4, color="#6b7884", style="italic")
 
-fig.savefig("pipeline_flowchart.png", dpi=150, bbox_inches="tight")
-print("wrote pipeline_flowchart.png")
+import os
+os.makedirs("figures", exist_ok=True)
+fig.savefig("figures/pipeline_flowchart.png", dpi=150, bbox_inches="tight")
+print("wrote figures/pipeline_flowchart.png")
