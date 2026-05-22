@@ -117,7 +117,5 @@ ax.text(80, 1.8, "Steps 1–5 of the pipeline.  Offline training is cached in "
         "propagates to each recommendation.",
         ha="center", fontsize=8.4, color="#6b7884", style="italic")
 
-import os
-os.makedirs("figures", exist_ok=True)
-fig.savefig("figures/pipeline_flowchart.png", dpi=150, bbox_inches="tight")
-print("wrote figures/pipeline_flowchart.png")
+fig.savefig("pipeline_flowchart.png", dpi=150, bbox_inches="tight")
+print("wrote pipeline_flowchart.png")

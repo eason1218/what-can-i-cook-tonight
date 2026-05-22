@@ -25,7 +25,7 @@ from recipe_recommender import _coerce_ingredients, normalize_token
 
 MIN_RATINGS = 5
 MIN_INGR, MAX_INGR = 2, 35
-OUT_PATH = "data/recipes_clean.csv"
+OUT_PATH = "recipes_clean.csv"
 
 
 def _download() -> str:

@@ -9,34 +9,32 @@ alignment)* 和 *贝叶斯平滑评分(Bayesian-smoothed rating)* 的综合分�
 
 ## 流程一览
 
-![流程图](figures/pipeline_flowchart.png)
+![流程图](pipeline_flowchart.png)
 
-*可编辑的 Mermaid 源见 [`docs/flowchart.md`](docs/flowchart.md);用 `python make_flowchart.py` 可重新生成 PNG。*
+*可编辑的 Mermaid 源见 [`flowchart.md`](flowchart.md);用 `python make_flowchart.py` 可重新生成 PNG。*
 
 ## 项目结构
 
 ```
-.
-├── recipe_recommender.py       # 模型 + 五个函数:train_lda、filter_candidates、
-│                               #   infer_user_posterior、score_recipes、recommend
-├── prepare_data.py             # 下载 Food.com   ->  data/recipes_clean.csv
-├── run_demo.py                 # 端到端 demo     ->  results.json(并训练模型)
-├── visualize.py                # 贝叶斯图        ->  figures/
-├── make_flowchart.py           # 流程图          ->  figures/pipeline_flowchart.png
-├── notebooks/
-│   ├── model_pipeline.ipynb    # 端到端构建流程(已执行,内嵌图)
-│   ├── usage_example.ipynb     # 单次推荐使用案例(已执行)
-│   └── Data.ipynb              # 原始数据工程笔记本(spaCy)
-├── figures/                    # fig1–fig4 + pipeline_flowchart.png
-├── docs/
-│   ├── presentation_script.md  # 约 5 分钟中英双语演讲稿
-│   └── flowchart.md            # 可编辑的 Mermaid 流程图
-├── data/                       # recipes_clean.csv (生成;已 gitignore)
-├── models/                     # lda_model.pkl     (训练;已 gitignore)
-├── model_selection.json        # fig1 背后的 K-sweep 数据
-├── results.json                # 最近一次 demo 结果
-├── requirements.txt · LICENSE · .gitignore
-└── README.md · README.zh-CN.md
+model/
+├── recipe_recommender.py            # 模型 + 五个函数:train_lda、filter_candidates、
+│                                     #   infer_user_posterior、score_recipes、recommend
+├── prepare_data.py                  # 下载 Food.com   ->  recipes_clean.csv
+├── run_demo.py                      # 端到端 demo     ->  results.json(并训练模型)
+├── visualize.py                     # 贝叶斯图        ->  fig1–fig4 PNG
+├── make_flowchart.py                # 流程图          ->  pipeline_flowchart.png
+├── model_pipeline.ipynb             # 端到端构建流程(已执行,内嵌图)
+├── usage_example.ipynb              # 单次推荐使用案例(已执行)
+├── Data.ipynb                       # 原始数据工程笔记本(spaCy)
+├── fig1_model_selection.png · fig2_topic_phi_posterior.png
+├── fig3_user_topic_posterior.png · fig4_recommendation_uncertainty.png · pipeline_flowchart.png
+├── presentation_script.md           # 约 5 分钟中英双语演讲稿
+├── flowchart.md                     # 可编辑的 Mermaid 流程图
+├── model_selection.json             # fig1 背后的 K-sweep 数据
+├── results.json                     # 最近一次 demo 结果
+├── requirements.txt · README.md · README.zh-CN.md
+├── recipes_clean.csv                # 由 prepare_data.py 生成(已 gitignore)
+└── lda_model.pkl                    # 由 run_demo.py 训练(已 gitignore)
 ```
 
 五个核心函数都在 `recipe_recommender.py`:`train_lda`、`filter_candidates`、
@@ -46,7 +44,7 @@ alignment)* 和 *贝叶斯平滑评分(Bayesian-smoothed rating)* 的综合分�
 
 ```bash
 pip install pymc arviz nutpie kagglehub inflect numpy pandas scipy
-python prepare_data.py          # -> data/recipes_clean.csv
+python prepare_data.py          # -> recipes_clean.csv
 python run_demo.py              # 训练 + 推荐
 # 或作为库使用:
 python recipe_recommender.py --ingredients chicken garlic onion tomato rice salt
@@ -54,13 +52,13 @@ python recipe_recommender.py --ingredients chicken garlic onion tomato rice salt
 
 ```python
 import pandas as pd, recipe_recommender as rr
-df = pd.read_csv("data/recipes_clean.csv")
+df = pd.read_csv("recipes_clean.csv")
 rr.recommend(["chicken", "garlic", "onion", "tomato", "rice", "salt"], df)
 ```
 
-> **注意:** `data/recipes_clean.csv` 和 `models/lda_model.pkl` 已被 **gitignore**(大 / 可重新生成)。
+> **注意:** `recipes_clean.csv` 和 `lda_model.pkl` 已被 **gitignore**(大 / 可重新生成)。
 > 先跑 `python prepare_data.py` 再跑 `python run_demo.py` 生成一次即可——notebook 会载入
-> `models/lda_model.pkl`。已提交的 notebook 已内嵌输出与图,所以在 GitHub 上无需运行即可查看。
+> `lda_model.pkl`。已提交的 notebook 已内嵌输出与图,所以在 GitHub 上无需运行即可查看。
 
 ## 五个步骤
 
@@ -151,31 +149,31 @@ rr.recommend(pantry, df, diversity=0.5)          # 让 Top-5 分散到不同菜�
 
 ## 可视化(`python visualize.py`)
 
-全部用缓存后验(`models/lda_model.pkl`)生成 —— 无需重训,几秒完成。
+全部用缓存后验(`lda_model.pkl`)生成 —— 无需重训,几秒完成。
 
 **模型选择 —— 为什么样本外选 K**
 
-![模型选择:留出预测 vs 样本内 WAIC/LOO 随 K 变化](figures/fig1_model_selection.png)
+![模型选择:留出预测 vs 样本内 WAIC/LOO 随 K 变化](fig1_model_selection.png)
 
 *留出预测 lppd(绿色)在较小的 K 处达到峰值,而样本内的 WAIC/LOO(右轴)随 K 持续"变好"
 —— 典型的过拟合特征。所以 K 要样本外选。*
 
 **主题→配料后验 φ(94% 可信区间)**
 
-![每个主题的 top 配料及 phi 的 94% 可信区间](figures/fig2_topic_phi_posterior.png)
+![每个主题的 top 配料及 phi 的 94% 可信区间](fig2_topic_phi_posterior.png)
 
 *"全贝叶斯"视角:我们保留的是 φ 的后验分布,而不是点估计。*
 
 **步骤 3 —— 用户的风味后验**
 
-![P(topic | pantry) 及 94% 可信区间](figures/fig3_user_topic_posterior.png)
+![P(topic | pantry) 及 94% 可信区间](fig3_user_topic_posterior.png)
 
 *`P(topic | pantry)`(均值 ± 94% CI):意式菜篮坍缩到单一主题(确定),
 烘焙菜篮分裂在两个主题之间(确有不确定性)—— 同一套机制,确定性不同。*
 
 **不确定性传播到排名**
 
-![Top-5 风味对齐后验](figures/fig4_recommendation_uncertainty.png)
+![Top-5 风味对齐后验](fig4_recommendation_uncertainty.png)
 
 *Top-5 的逐 MCMC 样本风味对齐 —— φ 后验的不确定性一路传到了最终分数。*
 

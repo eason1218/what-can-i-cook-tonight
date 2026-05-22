@@ -30,9 +30,8 @@ import recipe_recommender as rr
 
 sns.set_theme(style="whitegrid", context="talk", font_scale=0.7)
 
-DATA = "data/recipes_clean.csv"
-MODEL = "models/lda_model.pkl"
-os.makedirs("figures", exist_ok=True)
+DATA = "recipes_clean.csv"
+MODEL = "lda_model.pkl"
 HDI = 94                                     # credible-interval width (%)
 _LO, _HI = (100 - HDI) / 2, 100 - (100 - HDI) / 2
 _EPS = 1e-12
@@ -51,7 +50,7 @@ def _sim_samples(recipe_post: np.ndarray, user_post: np.ndarray) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-def fig_model_selection(path="figures/fig1_model_selection.png"):
+def fig_model_selection(path="fig1_model_selection.png"):
     if not os.path.exists("model_selection.json"):
         print("skip fig1: model_selection.json not found"); return
     t = pd.DataFrame(json.load(open("model_selection.json"))).sort_values("K")
@@ -84,7 +83,7 @@ def fig_model_selection(path="figures/fig1_model_selection.png"):
     fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig); print("wrote", path)
 
 
-def fig_topic_phi(path="figures/fig2_topic_phi_posterior.png", top_n=8):
+def fig_topic_phi(path="fig2_topic_phi_posterior.png", top_n=8):
     m = rr.load_model(MODEL)
     phi = m.phi_samples                          # (S, K, V)
     mean = phi.mean(0)
@@ -115,7 +114,7 @@ def fig_topic_phi(path="figures/fig2_topic_phi_posterior.png", top_n=8):
     plt.close(fig); print("wrote", path)
 
 
-def fig_user_posterior(path="figures/fig3_user_topic_posterior.png"):
+def fig_user_posterior(path="fig3_user_topic_posterior.png"):
     # Bars = posterior mean, error bars = 94% credible interval. (A violin can't show
     # a delta-posterior: some pantries collapse to one topic with zero variance.)
     m = rr.load_model(MODEL)
@@ -146,7 +145,7 @@ def fig_user_posterior(path="figures/fig3_user_topic_posterior.png"):
     plt.close(fig); print("wrote", path)
 
 
-def fig_reco_uncertainty(path="figures/fig4_recommendation_uncertainty.png",
+def fig_reco_uncertainty(path="fig4_recommendation_uncertainty.png",
                          pantry=ITAL, name="Italian-ish", top_n=5):
     df = pd.read_csv(DATA)
     m = rr.load_model(MODEL)

@@ -17,7 +17,7 @@ import pandas as pd
 
 import recipe_recommender as rr
 
-DATA = "data/recipes_clean.csv"
+DATA = "recipes_clean.csv"
 
 PANTRIES = {
     "Italian-ish": ["chicken", "garlic", "onion", "olive oil", "tomato",
@@ -41,7 +41,7 @@ def main():
     model = rr.train_lda(df, k_values=(6,), n_train=400,
                          vocab_size=100, draws=300, tune=400, chains=2,
                          seed=42)                                # nutpie
-    rr.save_model(model, "models/lda_model.pkl")
+    rr.save_model(model, "lda_model.pkl")
     rr._STATE = {"model": model, "df_id": id(df)}      # reuse for recommend()
 
     # ---- Convergence diagnostics (within-chain ESS of the kept chain) ---------
@@ -91,7 +91,7 @@ def main():
 
     with open("results.json", "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
-    print("\nWrote results.json and models/lda_model.pkl", flush=True)
+    print("\nWrote results.json and lda_model.pkl", flush=True)
 
 
 if __name__ == "__main__":

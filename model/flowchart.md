@@ -3,7 +3,7 @@
 Two equivalent forms: a rendered **PNG** (for slides / any viewer) and an editable
 **Mermaid** source (GitHub renders it inline). Same pipeline either way.
 
-![Pipeline flowchart](../figures/pipeline_flowchart.png)
+![Pipeline flowchart](pipeline_flowchart.png)
 
 *Regenerate the PNG with `python make_flowchart.py` (run from the repo root).*
 

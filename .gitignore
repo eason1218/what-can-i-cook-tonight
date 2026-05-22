@@ -15,9 +15,7 @@ Thumbs.db
 *.html
 
 # Large generated artifacts — regenerate with prepare_data.py / run_demo.py
-data/*
-!data/.gitkeep
-models/*
-!models/.gitkeep
+model/recipes_clean.csv
+model/lda_model.pkl
 
-# (figures/ are intentionally committed: small, and needed for the README to render)
+# (model/fig*.png + pipeline_flowchart.png ARE committed: small, needed for the README)
