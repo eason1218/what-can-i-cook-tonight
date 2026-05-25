@@ -31,22 +31,23 @@ model/
 │   ├── recipe_recommender.py    # model + the 5 functions: train_lda, filter_candidates,
 │   │                            #   infer_user_posterior, score_recipes, recommend
 │   ├── topic_alignment.py       # Hungarian topic-label alignment for the Bootstrap refits
-│   ├── prepare_data.py          # download Food.com  ->  data/recipes_clean.csv
 │   ├── run_demo.py              # end-to-end demo    ->  results.json (+ trains the model)
 │   ├── visualize.py             # figures            ->  figures/
 │   └── make_flowchart.py        # pipeline diagram   ->  figures/pipeline_flowchart.png
 ├── notebooks/
 │   ├── model_pipeline.ipynb     # end-to-end construction walkthrough (executed)
-│   ├── usage_example.ipynb      # a single recommendation use case (executed)
-│   └── Data.ipynb               # original data-engineering notebook (spaCy)
+│   └── usage_example.ipynb      # a single recommendation use case (executed)
 ├── tests/                       # test_alignment.py  (pytest)
 ├── figures/                     # fig1–fig4 + pipeline_flowchart.png
 ├── docs/                        # presentation_script.md · flowchart.md
-├── data/                        # recipes_clean.csv  (generated; gitignored)
 ├── models/                      # lda_model.pkl      (trained;   gitignored)
 ├── model_selection.json         # held-out perplexity per K (behind fig1)
 └── results.json                 # last demo run
 ```
+
+> The recipe corpus is built by the pipeline's **data stage** at the repo root
+> (`data/prepare_data.py` → `data/recipes_clean.csv`) and read from `../data/`; the original
+> data-engineering notebook is `data/Data.ipynb`.
 
 The five required functions live in `src/recipe_recommender.py`: `train_lda`,
 `filter_candidates`, `infer_user_posterior`, `score_recipes`, `recommend`.
@@ -54,8 +55,9 @@ The five required functions live in `src/recipe_recommender.py`: `train_lda`,
 ## Quick start
 
 ```bash
+# run from the model/ folder
 pip install scikit-learn joblib kagglehub inflect numpy pandas scipy matplotlib seaborn
-python src/prepare_data.py      # -> data/recipes_clean.csv
+python ../data/prepare_data.py  # Stage 1 (repo-root data/) -> data/recipes_clean.csv
 python src/run_demo.py          # train (full corpus, ~25–60 s) + recommend
 # or, as a library:
 python src/recipe_recommender.py --ingredients chicken garlic onion tomato rice salt
@@ -64,14 +66,15 @@ python src/recipe_recommender.py --ingredients chicken garlic onion tomato rice 
 ```python
 import sys; sys.path.insert(0, "src")          # run from the model/ folder
 import pandas as pd, recipe_recommender as rr
-df = pd.read_csv("data/recipes_clean.csv")
+df = pd.read_csv("../data/recipes_clean.csv")  # corpus lives in the repo-root data/ stage
 rr.recommend(["chicken", "garlic", "onion", "tomato", "rice", "salt"], df)
 ```
 
-> **Note.** `data/recipes_clean.csv` and `models/lda_model.pkl` are **gitignored** (large /
-> regenerable). Run `python src/prepare_data.py` then `python src/run_demo.py` once to generate
-> them — the notebooks load `models/lda_model.pkl`. The committed notebooks already have their
-> outputs and figures embedded, so they render on GitHub without running anything.
+> **Note.** `data/recipes_clean.csv` (repo-root data stage) and `models/lda_model.pkl` are
+> **gitignored** (large / regenerable). Run `python ../data/prepare_data.py` then
+> `python src/run_demo.py` once to generate them — the notebooks load `models/lda_model.pkl`. The
+> committed notebooks already have their outputs and figures embedded, so they render on GitHub
+> without running anything.
 
 ## The five steps
 
@@ -149,7 +152,8 @@ Returns the Top-N as dicts:
   "recipe_name": str,
   "score": float,
   "coverage": "5/6 ingredients",
-  "missing_ingredients": [...],
+  "all_ingredients": [...],        # every ingredient the recipe needs (normalized)
+  "missing_ingredients": [...],    # the subset of all_ingredients you don't have
   "flavor_tags": [...],            # top-2 topic labels
   "predicted_rating": float,
   "posterior_uncertainty": float, # std of flavor alignment across Bootstrap draws
@@ -173,7 +177,7 @@ rr.recommend(pantry, df, diversity=0.5)          # spread the Top-5 across recip
 ```
 Matching is on the same normalized ingredient tokens as coverage, so it stays consistent.
 
-## Visualizations (`python visualize.py`)
+## Visualizations (`python src/visualize.py`)
 
 Built from the cached model (`models/lda_model.pkl`) — no retraining, runs in seconds.
 

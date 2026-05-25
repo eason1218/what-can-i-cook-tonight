@@ -28,22 +28,22 @@ model/
 │   ├── recipe_recommender.py    # 模型 + 五个函数:train_lda、filter_candidates、
 │   │                            #   infer_user_posterior、score_recipes、recommend
 │   ├── topic_alignment.py       # Bootstrap 重拟合的匈牙利主题标签对齐
-│   ├── prepare_data.py          # 下载 Food.com   ->  data/recipes_clean.csv
 │   ├── run_demo.py              # 端到端 demo     ->  results.json(并训练模型)
 │   ├── visualize.py             # 图              ->  figures/
 │   └── make_flowchart.py        # 流程图          ->  figures/pipeline_flowchart.png
 ├── notebooks/
 │   ├── model_pipeline.ipynb     # 端到端构建流程(已执行,内嵌图)
-│   ├── usage_example.ipynb      # 单次推荐使用案例(已执行)
-│   └── Data.ipynb               # 原始数据工程笔记本(spaCy)
+│   └── usage_example.ipynb      # 单次推荐使用案例(已执行)
 ├── tests/                       # test_alignment.py(pytest)
 ├── figures/                     # fig1–fig4 + pipeline_flowchart.png
 ├── docs/                        # presentation_script.md · flowchart.md
-├── data/                        # recipes_clean.csv  (生成;已 gitignore)
 ├── models/                      # lda_model.pkl      (训练;已 gitignore)
 ├── model_selection.json         # 各 K 的留出 perplexity(fig1 背后数据)
 └── results.json                 # 最近一次 demo 结果
 ```
+
+> 配方语料由流水线的**数据阶段**在仓库根目录生成(`data/prepare_data.py` → `data/recipes_clean.csv`),
+> 模型从 `../data/` 读取;原始数据工程笔记本是 `data/Data.ipynb`。
 
 五个核心函数都在 `src/recipe_recommender.py`:`train_lda`、`filter_candidates`、
 `infer_user_posterior`、`score_recipes`、`recommend`。
@@ -51,8 +51,9 @@ model/
 ## 快速开始
 
 ```bash
+# 在 model/ 目录下运行
 pip install scikit-learn joblib kagglehub inflect numpy pandas scipy matplotlib seaborn
-python src/prepare_data.py      # -> data/recipes_clean.csv
+python ../data/prepare_data.py  # 阶段 1(仓库根 data/) -> data/recipes_clean.csv
 python src/run_demo.py          # 训练(全量,约 25–60 秒) + 推荐
 # 或作为库使用:
 python src/recipe_recommender.py --ingredients chicken garlic onion tomato rice salt
@@ -61,13 +62,14 @@ python src/recipe_recommender.py --ingredients chicken garlic onion tomato rice 
 ```python
 import sys; sys.path.insert(0, "src")          # 在 model/ 目录下运行
 import pandas as pd, recipe_recommender as rr
-df = pd.read_csv("data/recipes_clean.csv")
+df = pd.read_csv("../data/recipes_clean.csv")  # 语料在仓库根 data/ 阶段
 rr.recommend(["chicken", "garlic", "onion", "tomato", "rice", "salt"], df)
 ```
 
-> **注意:** `data/recipes_clean.csv` 和 `models/lda_model.pkl` 已被 **gitignore**(大 / 可重新生成)。
-> 先跑 `python src/prepare_data.py` 再跑 `python src/run_demo.py` 生成一次即可——notebook 会载入
-> `models/lda_model.pkl`。已提交的 notebook 已内嵌输出与图,所以在 GitHub 上无需运行即可查看。
+> **注意:** `data/recipes_clean.csv`(仓库根 data/ 阶段)和 `models/lda_model.pkl` 已被 **gitignore**
+> (大 / 可重新生成)。先跑 `python ../data/prepare_data.py` 再跑 `python src/run_demo.py` 生成一次即可
+> ——notebook 会载入 `models/lda_model.pkl`。已提交的 notebook 已内嵌输出与图,所以在 GitHub 上无需
+> 运行即可查看。
 
 ## 五个步骤
 
@@ -135,7 +137,8 @@ score = coverage^2 · overlap_bonus · flavor_alignment^1 · rating_prior^1
   "recipe_name": str,
   "score": float,
   "coverage": "5/6 ingredients",
-  "missing_ingredients": [...],
+  "all_ingredients": [...],        # 这道菜需要的全部配料(归一化)
+  "missing_ingredients": [...],    # all_ingredients 中你没有的那部分
   "flavor_tags": [...],            # top-2 主题标签
   "predicted_rating": float,
   "posterior_uncertainty": float, # 风味对齐在 Bootstrap 样本上的标准差
@@ -159,7 +162,7 @@ rr.recommend(pantry, df, diversity=0.5)          # 让 Top-5 分散到不同菜�
 ```
 匹配用的是与 coverage 相同的归一化配料 token,因此保持一致。
 
-## 可视化(`python visualize.py`)
+## 可视化(`python src/visualize.py`)
 
 全部用缓存模型(`models/lda_model.pkl`)生成 —— 无需重训,几秒完成。
 
