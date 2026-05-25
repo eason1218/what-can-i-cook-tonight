@@ -195,7 +195,8 @@ python yolo/build_mapping.py    # → yolo/yolo_vocab_mapping.json
 ## Acknowledgments
 
 - [Food.com Recipes & Interactions](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions) — the recipe corpus.
-- [Ingredient Object Detection Model](https://huggingface.co/HYUNAHKO/Ingredients_object_detection) — used as the ingredient-detector backbone.
+- [Ultralytics Yolov5](https://github.com/ultralytics/yolov5) — used as the ingredient-detector backbone.
+- [Ingredient Object Detection Model](https://huggingface.co/HYUNAHKO/Ingredients_object_detection) — used as the pre-trained ingredient detection model checkpoint (`best.pt`).
 - Built with [scikit-learn](https://scikit-learn.org/), [Gradio](https://www.gradio.app/), and [PyTorch](https://pytorch.org/).
 
 ## License
