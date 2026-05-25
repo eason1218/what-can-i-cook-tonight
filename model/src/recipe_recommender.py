@@ -662,7 +662,8 @@ def score_recipes(user_ingredients: list[str], candidates: pd.DataFrame,
             "recipe_name": row.get("recipe_name", row.get("name", "")),
             "score": round(float(score), 4),
             "coverage": f"{int(row['_inter'])}/{int(row['_size'])} ingredients",
-            "missing_ingredients": missing,
+            "all_ingredients": list(recipe_ingr),   # every ingredient the recipe needs
+            "missing_ingredients": missing,          # the subset the user doesn't have
             "flavor_tags": flavor_tags,
             "predicted_rating": round(float(rating), 3),
             "posterior_uncertainty": round(float(uncertainty), 4),
@@ -812,9 +813,16 @@ def recommend(user_ingredients: list[str], df: pd.DataFrame,
 # --------------------------------------------------------------------------- #
 if __name__ == "__main__":
     import argparse
+    import os
+
+    # Resolve default data/model paths relative to this file (repo layout:
+    # model/src/recipe_recommender.py) so the CLI runs from any directory.
+    _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    _DEFAULT_DATA = os.path.join(_ROOT, "data", "recipes_clean.csv")
+    _DEFAULT_MODEL = os.path.join(_ROOT, "model", "models", "lda_model.pkl")
 
     ap = argparse.ArgumentParser(description="Bayesian LDA recipe recommender demo")
-    ap.add_argument("--data", default="data/recipes_clean.csv",
+    ap.add_argument("--data", default=_DEFAULT_DATA,
                     help="cleaned recipe CSV (cols: recipe_id, recipe_name, "
                          "ingredients, avg_rating, n_ratings)")
     ap.add_argument("--ingredients", nargs="+",
@@ -828,11 +836,14 @@ if __name__ == "__main__":
     ap.add_argument("--diet", choices=["vegetarian", "vegan"], default=None)
     ap.add_argument("--diversity", type=float, default=0.0,
                     help="0..1 MMR re-rank for a more varied list")
+    ap.add_argument("--model-path", default=_DEFAULT_MODEL,
+                    help="cached model pickle (trained on first run if absent)")
     args = ap.parse_args()
 
     df = pd.read_csv(args.data)
     print(f"Loaded {len(df):,} recipes")
     recs = recommend(args.ingredients, df, top_n=args.top_n, exclude=args.exclude,
-                     must_use=args.must_use, diet=args.diet, diversity=args.diversity)
+                     must_use=args.must_use, diet=args.diet, diversity=args.diversity,
+                     model_path=args.model_path)
     print(f"\n=== TOP-{args.top_n} RECOMMENDATIONS ===")
     print(json.dumps(recs, indent=2, ensure_ascii=False))

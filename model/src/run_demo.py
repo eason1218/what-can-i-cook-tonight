@@ -13,13 +13,23 @@ Outputs:
 """
 
 import json
+import os
 import time
 
 import pandas as pd
 
 import recipe_recommender as rr
 
-DATA = "../data/recipes_clean.csv"        # Stage-1 data lives in the top-level data/ dir
+# Resolve paths relative to this file (model/src/run_demo.py) so the demo runs from
+# any working directory: read the corpus from the repo-root data/ stage, write outputs
+# into model/.
+_HERE = os.path.dirname(os.path.abspath(__file__))         # model/src
+_MODEL_DIR = os.path.dirname(_HERE)                        # model/
+_ROOT = os.path.dirname(_MODEL_DIR)                        # repo root
+DATA = os.path.join(_ROOT, "data", "recipes_clean.csv")    # Stage-1 corpus (repo-root data/)
+PKL = os.path.join(_MODEL_DIR, "models", "lda_model.pkl")
+MODEL_SELECTION = os.path.join(_MODEL_DIR, "model_selection.json")
+RESULTS = os.path.join(_MODEL_DIR, "results.json")
 
 PANTRIES = {
     "Italian-ish": ["chicken", "garlic", "onion", "olive oil", "tomato",
@@ -37,11 +47,11 @@ def main():
     t0 = time.time()
     model = rr.train_lda(df)                       # K=None -> auto-select
     train_secs = time.time() - t0
-    rr.save_model(model, "models/lda_model.pkl")
+    rr.save_model(model, PKL)
     rr._STATE = {"model": model, "df_id": id(df)}      # reuse for recommend()
 
     # K-selection table behind fig1 (held-out perplexity, lower=better)
-    with open("model_selection.json", "w", encoding="utf-8") as f:
+    with open(MODEL_SELECTION, "w", encoding="utf-8") as f:
         json.dump(model.perplexity_table.to_dict(orient="records"), f, indent=2)
 
     report = {
@@ -90,7 +100,7 @@ def main():
         print(f"\n--- {name} ---", flush=True)
         print(json.dumps(recs, indent=2, ensure_ascii=False), flush=True)
 
-    with open("results.json", "w", encoding="utf-8") as f:
+    with open(RESULTS, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     print("\nWrote results.json, model_selection.json and models/lda_model.pkl",
           flush=True)

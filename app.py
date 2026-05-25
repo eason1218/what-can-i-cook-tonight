@@ -213,7 +213,7 @@ body, .gradio-container {
 
 .section-heading {
   margin: 0 0 12px;
-  padding-left: 14px;
+  padding-left: 4px;
   color: #f29a17;
   font-size: 19px;
   font-weight: 600;
@@ -282,64 +282,45 @@ body, .gradio-container {
 }
 
 .gradio-container .block {
-  border-radius: 24px !important;
+  border-radius: 24px;
 }
 
-.gradio-container .gr-markdown,
-.gradio-container .prose,
-.gradio-container .gr-html {
-  padding-left: 16px;
+/* Full-bleed HTML blocks (hero, recipe cards, footer): strip ONLY Gradio's
+   block chrome (the card bg/border/shadow/padding + any inner html wrapper) so
+   they sit flush to the same left/right edges as the panels below -- this lines
+   the dark header up with the content row. The inner content (.hero,
+   .recipe-card, .footer-note) keeps its own styling. */
+.flush {
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.flush > .html-container,
+.flush > .prose,
+.flush > .gr-html {
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
 }
 
-.gradio-container .prose h1,
-.gradio-container .prose h2,
-.gradio-container .prose h3,
-.gradio-container .prose p {
-  overflow: visible;
-  margin-left: 0 !important;
-  padding-left: 12px !important;
-}
-
-.gradio-container .gr-block-label,
-.gradio-container .gr-form > label,
-.gradio-container .gr-dataframe > label,
-.gradio-container .gradio-dataframe > label,
-.gradio-container .gr-dataframe .table-wrap,
-.gradio-container .gradio-dataframe .table-wrap,
-.gradio-container .gr-dataframe,
-.gradio-container .gradio-dataframe,
-.gradio-container .gr-group,
-.gradio-container .gr-box,
-.gradio-container [role="grid"],
-.gradio-container table {
-  margin-left: 0 !important;
-  padding-left: 16px !important;
+/* Markdown text (e.g. the "Mapped ingredient set" list): give the prose a
+   small left pad and stop the block from clipping it, so the first glyph
+   isn't cut off. Scoped to .prose, so the flush HTML header/cards are
+   untouched (those render in .html-container, not .prose). */
+.gradio-container .prose {
   overflow: visible !important;
 }
-
-.gradio-container .gr-dataframe .table-wrap,
-.gradio-container .gradio-dataframe .table-wrap,
-.gradio-container .gr-dataframe,
-.gradio-container .gradio-dataframe,
-.gradio-container [role="grid"] {
-  padding-right: 16px !important;
-}
-
-.gradio-container .gr-block-label,
-.gradio-container .gr-form > label,
-.gradio-container .gr-dataframe > label,
-.gradio-container .gradio-dataframe > label {
-  display: none !important;
+.gradio-container .prose > * {
+  padding-left: 6px;
+  overflow: visible;
 }
 
 .gradio-container .gr-button-primary {
   background: linear-gradient(135deg, var(--terracotta), #d98057) !important;
   border: none !important;
-}
-
-.gradio-container .gr-button-secondary {
-  border-color: rgba(191, 95, 60, 0.28) !important;
-  color: #934322 !important;
+  font-weight: 600 !important;
 }
 
 .footer-note {
@@ -443,11 +424,24 @@ def render_recipe_cards(recommendations: list[dict]) -> str:
 
     cards = []
     for rank, item in enumerate(recommendations, start=1):
-        missing_items = "".join(
-            f"<li>{html.escape(ingredient)}</li>" for ingredient in item["missing_ingredients"]
-        ) or "<li>Nothing missing.</li>"
+        # Full list of everything the recipe needs; fall back to the missing-only
+        # list for older model outputs that predate the `all_ingredients` field.
+        all_ingr = item.get("all_ingredients") or item.get("missing_ingredients", [])
+        missing_set = set(item.get("missing_ingredients", []))
+        total_n = len(all_ingr)
+        have_n = sum(1 for ing in all_ingr if ing not in missing_set)
+
+        # One chip per ingredient: the ones you have (sage) and the ones you still
+        # need (terracotta + "need"), so the card shows the complete recipe.
+        ingredient_chips = "".join(
+            (f'<span class="pill terracotta">{html.escape(ing)} &middot; need</span>'
+             if ing in missing_set
+             else f'<span class="pill sage">{html.escape(ing)}</span>')
+            for ing in all_ingr
+        ) or '<span class="pill">No ingredient data</span>'
+
         tags = "".join(
-            f'<span class="pill sage">{html.escape(tag)}</span>' for tag in item["flavor_tags"]
+            f'<span class="pill">{html.escape(tag)}</span>' for tag in item["flavor_tags"]
         )
         cards.append(
             f"""
@@ -462,9 +456,10 @@ def render_recipe_cards(recommendations: list[dict]) -> str:
               <p class="summary-block">
                 Posterior uncertainty: {html.escape(str(item["posterior_uncertainty"]))}
               </p>
+              <p class="subhead">Full recipe &middot; you have {have_n}/{total_n}</p>
+              <div class="recipe-meta">{ingredient_chips}</div>
+              <p class="subhead">Flavor profile</p>
               <div class="recipe-meta">{tags}</div>
-              <p class="subhead">Missing ingredients</p>
-              <ul class="compact-list">{missing_items}</ul>
             </div>
             """
         )
@@ -595,7 +590,7 @@ def recommend_from_image(
 with gr.Blocks(
     title="What Can I Cook Tonight?",
 ) as demo:
-    gr.HTML(render_hero_metrics())
+    gr.HTML(render_hero_metrics(), elem_classes=["flush"])
     with gr.Row():
         with gr.Column(scale=5):
             image_input = gr.Image(label="Ingredient photo", type="pil")
@@ -611,13 +606,13 @@ with gr.Blocks(
         with gr.Column(scale=4):
             gr.HTML('<div class="section-heading">Detected ingredients</div>')
             detector_table = gr.Dataframe(
-                label="",
+                value=pd.DataFrame(columns=["Detected Label", "Confidence"]),
                 interactive=False,
                 show_label=False,
             )
             mapped_summary = gr.Markdown(value="Detected ingredients will appear here.")
 
-    image_cards = gr.HTML(render_recipe_cards([]))
+    image_cards = gr.HTML(render_recipe_cards([]), elem_classes=["flush"])
 
     _flow_inputs = [image_input, diet, diversity]
     _flow_outputs = [image_status_note, detector_table, mapped_summary, image_cards]
@@ -629,7 +624,8 @@ with gr.Blocks(
         <div class="footer-note">
           Gradio front-end for the What-Can-I-Cook-Tonight pipeline (data &middot; yolo &middot; model). Same recommender as run_pipeline.py.
         </div>
-        """
+        """,
+        elem_classes=["flush"],
     )
 
 
