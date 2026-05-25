@@ -1,4 +1,4 @@
-# 流程图 / Pipeline flowchart
+# Pipeline flowchart
 
 Two equivalent forms: a rendered **PNG** (for slides / any viewer) and an editable
 **Mermaid** source (GitHub renders it inline). Same pipeline either way.
@@ -13,14 +13,14 @@ Two equivalent forms: a rendered **PNG** (for slides / any viewer) and an editab
 
 ```mermaid
 flowchart LR
-    subgraph OFF["OFFLINE · build the model / 构建模型"]
+    subgraph OFF["OFFLINE · build the model"]
       direction LR
       A["Food.com raw data<br/>RAW_recipes + RAW_interactions"]
       A -->|"prepare_data.py · clean / normalize"| B["recipes_clean.csv<br/>53,573 recipes"]
       B --> C["<b>Step 1 · train_lda</b> — sklearn LDA point estimate φ̂ (full corpus)<br/>phi~Dir(0.01), theta~Dir(0.1)<br/>+ Bootstrap pseudo-posterior (Hungarian-aligned)<br/>choose K by held-out perplexity"]
       C --> D["phi Bootstrap samples (B×K×V)<br/>→ <b>lda_model.pkl</b> (final model)"]
     end
-    subgraph ON["ONLINE · answer a query / 回答查询"]
+    subgraph ON["ONLINE · answer a query"]
       direction LR
       P["your pantry<br/>chicken, garlic, tomato, …"]
       F["<b>Step 2 · filter_candidates</b><br/>coverage = |U ∩ R| / |R| ≥ 0.7"]

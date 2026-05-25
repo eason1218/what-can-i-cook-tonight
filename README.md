@@ -49,7 +49,7 @@ pip install -r requirements.txt        # includes gradio
 python app.py                          # → http://127.0.0.1:7860
 ```
 
-One streamlined flow — **拍照 → 识别 → 推荐 (photo → detect → recommend):** upload a fridge /
+One streamlined flow — **photo → detect → recommend:** upload a fridge /
 ingredient photo, YOLO detects the ingredients (fixed confidence `YOLO_CONF = 0.25`), and the
 Bayesian recommender returns recipes. Light controls: top-N, diet filter, diversity. Detection runs
 automatically on upload (or click *Detect & recommend*). Needs `torch`/`opencv` +
@@ -78,7 +78,7 @@ elsewhere, set `FINAL_BAYESIAN_ROOT=/path/to/project`. Port override: `GRADIO_SE
 Latent "flavor topics" over recipes: sklearn **point estimate** of `φ` on the full corpus +
 **Bootstrap** pseudo-posterior; recommends by coverage + latent-flavor alignment + Bayesian-smoothed
 rating, with uncertainty propagated to the ranking. See [`model/README.md`](model/README.md)
-([中文](model/README.zh-CN.md)) for the full write-up, and `model/src/recipe_recommender.py` for the
+for the full write-up, and `model/src/recipe_recommender.py` for the
 five functions (`train_lda, filter_candidates, infer_user_posterior, score_recipes, recommend`).
 
 ## Notes

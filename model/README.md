@@ -1,5 +1,3 @@
-**English** | [中文](README.zh-CN.md)
-
 # What Can I Cook Tonight? — Bayesian LDA Recipe Recommender
 
 A Bayesian Latent Dirichlet Allocation (LDA) recommender over latent "flavor topics".
