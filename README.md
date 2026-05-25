@@ -38,7 +38,7 @@ Bayesian Methods Final Project — by **Qixin Cui**, **Kevin Fan**, **Yizhuo Li*
 
 ## Features
 
-- 📷 **Photo → ingredients** — a YOLOv5 detector (95 ingredient classes) reads a fridge or counter photo.
+- 📷 **Photo → ingredients** — a Fine-Tuned YOLOv5 detector (95 ingredient classes) reads a fridge or counter photo.
 - 🧠 **Recommendations with confidence** — a Bayesian flavor model ranks recipes *and* reports how sure it is.
 - 🧾 **The whole recipe at a glance** — every suggestion lists all the ingredients it needs and flags the ones you're missing.
 - 🥗 **Real-life filters** — vegetarian / vegan, "must use this", and a diversity dial so you don't get five near-identical dishes.
@@ -195,7 +195,7 @@ python yolo/build_mapping.py    # → yolo/yolo_vocab_mapping.json
 ## Acknowledgments
 
 - [Food.com Recipes & Interactions](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions) — the recipe corpus.
-- [Ultralytics YOLOv5](https://github.com/ultralytics/yolov5) — the ingredient-detector backbone.
+- [Ingredient Object Detection Model](https://github.com/HYUNAHKO/Recipe-Generation) and [Hugging Face](https://huggingface.co/HYUNAHKO/Ingredients_object_detection) — used as the ingredient-detector backbone.
 - Built with [scikit-learn](https://scikit-learn.org/), [Gradio](https://www.gradio.app/), and [PyTorch](https://pytorch.org/).
 
 ## License
