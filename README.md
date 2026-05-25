@@ -16,6 +16,58 @@ Three stages, one entry point.
                           └────────────────  run_pipeline.py  ────────────────┘
 ```
 
+## Methodology
+
+> A recipe is a **document**, an ingredient is a **word**, and a cuisine or flavor is a latent
+> **topic** — so we model the corpus with **Latent Dirichlet Allocation (LDA)** and turn the learned
+> topics into recommendations *that carry their own uncertainty*.
+
+**Honest Bayesian at scale.** A fully-Bayesian NUTS posterior over `φ` (topic → ingredient) doesn't
+scale past a few hundred recipes, so we fit `φ` as a **point estimate** with scikit-learn on the
+**full 53,573-recipe corpus** (~25 s) and approximate its uncertainty by **Bootstrap**: refit 50×
+on resampled recipes, each warm-started from `φ̂` and realigned with the **Hungarian algorithm**
+(LDA topics are exchangeable, so label-switching must be undone). The genuinely uncertain, genuinely
+Bayesian quantity is the **user's** topic posterior — inferred from a handful of ingredients by
+Bayes' theorem, *per `φ`-sample*, so uncertainty flows all the way to the ranking:
+
+```math
+P(\text{topic}=k \mid \text{ingredients}) \;\propto\; \Big(\textstyle\prod_{i}\varphi_{k,i}\Big)\,P(\text{topic}=k)
+```
+
+**The five steps** — in `model/src/recipe_recommender.py`:
+
+| # | function | what it does |
+|:-:|----------|--------------|
+| 1 | `train_lda` | point-estimate `φ` on the full corpus + Bootstrap pseudo-posterior (Hungarian-aligned); choose `K` by held-out perplexity |
+| 2 | `filter_candidates` | keep recipes you can mostly make — *coverage* (the share of a recipe's ingredients you have) ≥ 0.7 |
+| 3 | `infer_user_posterior` | Bayes' theorem **per `φ`-sample** → a flavor profile that keeps its uncertainty |
+| 4 | `score_recipes` | the composite score below, computed per sample then averaged |
+| 5 | `recommend` | Top-N, with `diet` / `must_use` / `diversity` (MMR) options |
+
+**The ranking score** — four factors, each fixing a concrete failure mode:
+
+```math
+\text{score}=\underbrace{\text{coverage}^{2}}_{\text{can you make it?}}\cdot\underbrace{\big(1-e^{-|U\cap R|/\tau}\big)}_{\text{absolute overlap}}\cdot\underbrace{e^{-\mathrm{KL}(\text{recipe}\,\|\,\text{user})}}_{\text{flavor alignment}}\cdot\underbrace{\tfrac{\bar r\,n+\mu\kappa}{n+\kappa}}_{\text{Bayes-shrunk rating}}
+```
+
+**Where the Bayes lands.** On 53k recipes `φ` is *very* well determined, so its Bootstrap spread is
+tiny (per-element std ≈ 5e-4) — we report that honestly as resampling **stability**, not posterior
+width. The real uncertainty is on the **user side**, and it behaves: a focused pantry collapses onto
+one topic (certain), an ambiguous one spreads across two (uncertain).
+
+<table>
+<tr>
+<td width="50%"><img src="model/figures/fig1_model_selection.png" width="100%"></td>
+<td width="50%"><img src="model/figures/fig3_user_topic_posterior.png" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><sub><b>Model selection.</b> Held-out perplexity is monotone in K — the data honestly favors few, coarse topics (K=4).</sub></td>
+<td align="center"><sub><b>The Bayesian step.</b> P(topic | pantry): the Italian pantry collapses to one topic, the baker's splits across two.</sub></td>
+</tr>
+</table>
+
+Full derivations, all four figures, and the design caveats: **[`model/README.md`](model/README.md)**.
+
 ## Quick start
 
 ```bash
@@ -75,11 +127,9 @@ elsewhere, set `FINAL_BAYESIAN_ROOT=/path/to/project`. Port override: `GRADIO_SE
 - `weights/best.pt` (you provide) and `yolov5/` (cloned upstream repo) are **gitignored**.
 
 ### 3 · `model/` — the Bayesian LDA recommender
-Latent "flavor topics" over recipes: sklearn **point estimate** of `φ` on the full corpus +
-**Bootstrap** pseudo-posterior; recommends by coverage + latent-flavor alignment + Bayesian-smoothed
-rating, with uncertainty propagated to the ranking. See [`model/README.md`](model/README.md)
-for the full write-up, and `model/src/recipe_recommender.py` for the
-five functions (`train_lda, filter_candidates, infer_user_posterior, score_recipes, recommend`).
+The heart of the project — see **[Methodology](#methodology)** above for the model, the five steps,
+and the score. Full write-up: [`model/README.md`](model/README.md); code lives in
+`model/src/recipe_recommender.py`.
 
 ## Notes
 - **Windows + this `best.pt`:** the checkpoint was trained on Linux (Colab); `yolo/detect.py`
