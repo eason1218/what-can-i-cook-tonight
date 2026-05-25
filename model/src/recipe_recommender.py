@@ -1,49 +1,41 @@
 """
 recipe_recommender.py
 =====================
-A *fully Bayesian* LDA recipe recommender built on PyMC.
+A Bayesian LDA recipe recommender over latent "flavor topics".
 
 Pipeline ("What Can I Cook Tonight?")
 -------------------------------------
-    Step 1  train_lda()             -> Bayesian LDA over latent "flavor topics" (NUTS / MCMC)
+    Step 1  train_lda()             -> LDA topic model: sklearn point estimate of phi on
+                                       the full corpus + Bootstrap pseudo-posterior of phi
     Step 2  filter_candidates()     -> keep recipes the user can actually make (coverage)
     Step 3  infer_user_posterior()  -> Bayesian posterior over flavor topics for an ingredient set
-    Step 4  score_recipes()         -> composite Bayesian score using the *full* posterior
+    Step 4  score_recipes()         -> composite score using the full (Bootstrap) phi posterior
     Step 5  recommend()             -> Top-5 recipes as a list of dicts
 
-Why this is "fully Bayesian"
-----------------------------
-We never collapse to a single point estimate of phi (topic->ingredient) or theta
-(recipe->topic). NUTS gives us posterior *samples* of phi, and every downstream
-quantity (the user's flavor profile, each recipe's flavor profile, the flavor
-alignment similarity) is computed *per posterior sample and then averaged*. This
-propagates the model's epistemic uncertainty all the way to the final score, and
-lets us report a `posterior_uncertainty` for every recommendation.
+The model (sklearn point estimate + Bootstrap pseudo-posterior)
+--------------------------------------------------------------
+A fully-Bayesian NUTS fit of phi does not scale past a few hundred recipes, so phi is
+fit as a *point estimate* with sklearn's LatentDirichletAllocation on the FULL corpus
+(phi_hat = row-normalized components_). phi's uncertainty is then approximated by
+*Bootstrap*: refit B times on resampled recipes (warm-started from phi_hat) and keep
+the B aligned fits as pseudo-samples `phi_samples`. K is chosen by held-out perplexity.
 
-A note on the generative model & NUTS
--------------------------------------
-The classic LDA generative story has a *discrete* per-token topic assignment
-    z_mn ~ Categorical(theta_m).
-NUTS is a gradient-based sampler and cannot move over discrete latent variables.
-The standard, mathematically exact remedy is to **marginalize z out**:
+Where the Bayesian content lives
+--------------------------------
+Every downstream quantity (the user's flavor profile, each recipe's flavor profile,
+the flavor-alignment similarity) is computed *per phi-sample and then averaged*, so
+uncertainty is propagated to the final score and reported per recommendation. The
+genuinely uncertain, fully-Bayesian quantity is the *user's* topic posterior (Step 3):
+inferred from a handful of ingredients via Bayes' theorem applied to each phi-sample.
+phi itself is a point estimate, so its Bootstrap spread is small on a large corpus --
+we call it "bootstrap stability", not a Bayesian posterior (see README).
 
-    p(w_mn = v | theta_m, phi) = sum_k theta_m[k] * phi[k, v]   = (theta_m @ phi)[v]
-
-i.e. each ingredient token is Categorical with probability vector  p_m = theta_m @ phi.
-This is the same model -- z is simply integrated away analytically -- and it leaves
-only the continuous simplex variables phi and theta for NUTS to explore. The full
-posterior over phi and theta is preserved.
-
-A note on label switching (non-identifiability)
------------------------------------------------
-Topics are exchangeable: permuting the K topic labels leaves the likelihood
-p_m = theta_m @ phi unchanged. Therefore:
-  * WAIC (which depends only on the likelihood) is invariant to label switching,
-    so we can compare K across *all* chains safely.
-  * Topic-wise quantities (per-topic ingredient distributions, KL between topic
-    profiles) are NOT label-invariant across chains. So for everything downstream
-    of model selection we keep the posterior of a **single chain**, within which
-    the topic labels stay coherent.
+Label alignment (topic identifiability)
+---------------------------------------
+Topics are exchangeable, so each Bootstrap refit returns them in an arbitrary order.
+Before they can be treated as comparable samples, every refit's phi is permuted back
+onto phi_hat with the Hungarian algorithm on cosine similarity
+(topic_alignment.align_phi), so phi_samples[:, k, :] is a coherent "topic k" across draws.
 """
 
 from __future__ import annotations
@@ -51,15 +43,16 @@ from __future__ import annotations
 import json
 import re
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Sequence
 
 import numpy as np
 import pandas as pd
-import pymc as pm
-import arviz as az
 from scipy.special import softmax
+
+# sklearn / joblib are imported lazily inside train_lda (and the Bootstrap worker),
+# so importing this module stays light and the worker processes spawn cheaply.
 
 # --------------------------------------------------------------------------- #
 #  Hyper-priors (as specified in the task)                                     #
@@ -186,51 +179,47 @@ def _literal_eval(s):
 # =========================================================================== #
 @dataclass
 class LDAModel:
-    """Everything downstream steps need from the fitted Bayesian LDA.
+    """Everything downstream steps need from the fitted hybrid LDA.
 
-    phi_samples : np.ndarray, shape (S, K, V)
-        Posterior SAMPLES of the topic->ingredient distributions (single chain,
-        so topic labels are coherent across samples). The whole point of keeping
-        samples (not a mean) is to propagate uncertainty into the recommendation.
+    phi_samples : np.ndarray, shape (B, K, V)
+        Bootstrap pseudo-samples of the topic->ingredient distributions, each
+        aligned to phi_mean (so topic k is coherent across draws). Kept -- not
+        collapsed to a mean -- so Steps 3-5 can propagate uncertainty.
+    phi_mean : np.ndarray, shape (K, V)
+        The sklearn point estimate phi_hat (the model's best guess of phi).
     topic_prior : np.ndarray, shape (K,)
-        Empirical marginal topic frequency  P(topic)  = average recipe topic mix,
-        itself averaged over posterior samples (a fully Bayesian marginal prior).
+        Empirical marginal topic frequency  P(topic)  = average recipe topic mix.
     vocab / ingr2idx : the modeled ingredient space (the LDA "words").
     topic_labels : human-readable tag per topic (its top ingredients).
-    waic_table : DataFrame comparing candidate K -- held-out predictive lppd
-        (the selection metric, higher=better) plus WAIC and PSIS-LOO diagnostics.
+    perplexity_table : DataFrame of held-out perplexity per candidate K (the model
+        selection metric, lower=better); empty if K was fixed.
+    bootstrap_stability : mean per-element std of phi across Bootstrap samples.
+        NB: this is resampling *stability*, not a Bayesian posterior width.
     """
     best_k: int
-    phi_samples: np.ndarray          # (S, K, V)
+    phi_samples: np.ndarray          # (B, K, V)
+    phi_mean: np.ndarray             # (K, V)
     topic_prior: np.ndarray          # (K,)
     vocab: list[str]
     ingr2idx: dict[str, int]
     topic_labels: list[str]
-    waic_table: pd.DataFrame
-    idata: az.InferenceData = field(repr=False, default=None)
-    ess_min: float = None            # within-chain ESS of phi (convergence diag)
-    ess_median: float = None
+    perplexity_table: pd.DataFrame
+    bootstrap_stability: float = None
 
     @property
     def n_samples(self) -> int:
         return self.phi_samples.shape[0]
 
 
+_MODEL_FIELDS = ("best_k", "phi_samples", "phi_mean", "topic_prior", "vocab",
+                 "ingr2idx", "topic_labels", "perplexity_table", "bootstrap_stability")
+
+
 def save_model(model: LDAModel, path: str = "models/lda_model.pkl") -> None:
-    """Persist the fitted posterior (drops the heavy InferenceData)."""
-    import pickle
-    payload = {
-        "best_k": model.best_k,
-        "phi_samples": model.phi_samples,
-        "topic_prior": model.topic_prior,
-        "vocab": model.vocab,
-        "ingr2idx": model.ingr2idx,
-        "topic_labels": model.topic_labels,
-        "waic_table": model.waic_table,
-        "ess_min": model.ess_min,
-        "ess_median": model.ess_median,
-    }
+    """Persist the fitted model."""
     import os
+    import pickle
+    payload = {k: getattr(model, k) for k in _MODEL_FIELDS}
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "wb") as f:
         pickle.dump(payload, f)
@@ -241,7 +230,7 @@ def load_model(path: str = "models/lda_model.pkl") -> LDAModel:
     import pickle
     with open(path, "rb") as f:
         p = pickle.load(f)
-    return LDAModel(idata=None, **p)
+    return LDAModel(**p)
 
 
 # =========================================================================== #
@@ -266,324 +255,6 @@ def _get_recipe_ingredients(df: pd.DataFrame) -> pd.Series:
     return series
 
 
-def _build_corpus(df: pd.DataFrame, n_train: int, vocab_size: int,
-                  min_df: int, seed: int):
-    """Subsample recipes and build the bag-of-words tensors for LDA.
-
-    Returns
-    -------
-    doc_idx, word_idx : 1-D int arrays (one entry per ingredient *token*)
-    vocab, ingr2idx   : the modeled ingredient space
-    M                 : number of training documents (recipes)
-    """
-    rng = np.random.default_rng(seed)
-
-    ingredient_lists = _get_recipe_ingredients(df)
-
-    # ---- subsample recipes (fully-Bayesian NUTS does not scale to ~200k docs) --
-    n_train = min(n_train, len(df))
-    sample_pos = rng.choice(len(df), size=n_train, replace=False)
-    sample_lists = [ingredient_lists.iloc[i] for i in sample_pos]
-
-    # ---- vocabulary = most frequent ingredients (by document frequency) --------
-    from collections import Counter
-    df_count = Counter()
-    for lst in sample_lists:
-        df_count.update(set(lst))
-    vocab = [w for w, c in df_count.most_common() if c >= min_df][:vocab_size]
-    ingr2idx = {w: i for i, w in enumerate(vocab)}
-
-    # ---- encode each recipe as a list of in-vocab word indices -----------------
-    doc_idx, word_idx = [], []
-    m = 0
-    for lst in sample_lists:
-        toks = [ingr2idx[w] for w in lst if w in ingr2idx]
-        if len(toks) < 2:           # need >=2 tokens for a meaningful topic mix
-            continue
-        doc_idx.extend([m] * len(toks))
-        word_idx.extend(toks)
-        m += 1
-
-    return (np.asarray(doc_idx, dtype="int64"),
-            np.asarray(word_idx, dtype="int64"),
-            vocab, ingr2idx, m)
-
-
-# =========================================================================== #
-#  Manual WAIC (arviz 1.x dropped the standalone waic())                       #
-# =========================================================================== #
-def _pointwise_loglik(theta_s: np.ndarray, phi_s: np.ndarray,
-                      doc_idx: np.ndarray, word_idx: np.ndarray) -> np.ndarray:
-    """Per-token, per-sample log-likelihood  log p(w_n | theta, phi).
-
-    theta_s : (S, M, K)   phi_s : (S, K, V)
-    returns : (S, N_tokens)  where  loglik[s, n] = log( (theta_{m_n} @ phi)[w_n] )
-    """
-    # p_all[s, m, v] = sum_k theta_s[s,m,k] * phi_s[s,k,v]   (marginalize z)
-    p_all = np.einsum("smk,skv->smv", theta_s, phi_s)
-    p_tok = p_all[:, doc_idx, word_idx]            # (S, N_tokens)
-    return np.log(p_tok + _EPS)
-
-
-def _waic(loglik: np.ndarray) -> dict:
-    """Widely Applicable Information Criterion from pointwise log-likelihood.
-
-    loglik : (S, N) samples x observations.
-        lppd   = sum_n log mean_s exp(loglik[s,n])      (log pointwise predictive density)
-        p_waic = sum_n var_s(loglik[s,n])               (effective # parameters)
-        elpd   = lppd - p_waic                          (expected log predictive density)
-        WAIC   = -2 * elpd                              (deviance scale; lower = better)
-    """
-    S = loglik.shape[0]
-    from scipy.special import logsumexp
-    lppd = np.sum(logsumexp(loglik, axis=0) - np.log(S))
-    p_waic = np.sum(np.var(loglik, axis=0, ddof=1))
-    elpd = lppd - p_waic
-    return {"waic": -2.0 * elpd, "elpd_waic": elpd, "p_waic": p_waic, "lppd": lppd}
-
-
-# =========================================================================== #
-#  Out-of-sample model selection (held-out token predictive) + PSIS-LOO check  #
-# =========================================================================== #
-# WHY held-out tokens?  WAIC and LOO are *in-sample*: they reuse the training
-# tokens, so a more flexible model (larger K) can keep lowering them by fitting
-# the training corpus better -- there is no clean interior optimum, and a large
-# p_waic / p_loo just flags that the penalty has stopped being trustworthy.
-# Holding tokens out turns model selection into genuine prediction: extra topics
-# that merely memorize the training tokens do NOT help predict the held-out ones,
-# so the held-out predictive density *does* peak at a finite K.
-def _holdout_split(doc_idx: np.ndarray, word_idx: np.ndarray, frac: float = 0.15,
-                   seed: int = 0, min_train_per_doc: int = 2):
-    """Randomly mark a fraction of tokens as held-out, while leaving at least
-    `min_train_per_doc` tokens in every document (so each document's theta stays
-    identified during the fit). Returns (train_mask, test_mask)."""
-    rng = np.random.default_rng(seed)
-    is_test = np.zeros(len(doc_idx), dtype=bool)
-    for d in np.unique(doc_idx):
-        pos = np.where(doc_idx == d)[0]
-        n_test = min(int(round(frac * len(pos))), max(0, len(pos) - min_train_per_doc))
-        if n_test > 0:
-            is_test[rng.choice(pos, size=n_test, replace=False)] = True
-    return ~is_test, is_test
-
-
-def _heldout_lppd(theta_s: np.ndarray, phi_s: np.ndarray,
-                  doc_te: np.ndarray, word_te: np.ndarray) -> float:
-    """Log pointwise predictive density on held-out tokens (higher = better).
-    theta_s comes from the fit on the *training* tokens; we score the held-out
-    tokens of each document under that document's posterior theta and phi."""
-    if len(doc_te) == 0:
-        return float("nan")
-    from scipy.special import logsumexp
-    ll = _pointwise_loglik(theta_s, phi_s, doc_te, word_te)      # (S, N_te)
-    S = ll.shape[0]
-    return float(np.sum(logsumexp(ll, axis=0) - np.log(S)))
-
-
-def _loo_from_loglik(loglik_cd: np.ndarray) -> dict:
-    """PSIS-LOO (elpd_loo, p_loo) + Pareto-k diagnostic from a (chain, draw, obs)
-    pointwise log-likelihood. Reported -- NOT used for selection -- as an honest
-    reliability check: many Pareto-k above arviz's `good_k` threshold (or a large
-    p_loo) means the in-sample criteria cannot be trusted, which is exactly the
-    pathology a flexible LDA exhibits. Best-effort: NaNs if arviz can't compute it.
-
-    arviz needs a posterior group to derive the relative ESS (reff). The
-    log-likelihood theta@phi is label-invariant, so we hand it in as both the
-    `posterior` and `log_likelihood` group and let arviz compute reff itself."""
-    try:
-        idll = az.from_dict(
-            {"posterior": {"w": loglik_cd}, "log_likelihood": {"w": loglik_cd}},
-            dims={"w": ["obs"]})
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            res = az.loo(idll, pointwise=True, var_name="w")
-        pk = np.asarray(res.pareto_k.values)
-        good_k = float(getattr(res, "good_k", 0.7) or 0.7)
-        return {"elpd_loo": float(res.elpd), "p_loo": float(res.p),
-                "pct_bad_k": float(np.mean(pk > good_k))}
-    except Exception:
-        return {"elpd_loo": float("nan"), "p_loo": float("nan"),
-                "pct_bad_k": float("nan")}
-
-
-# =========================================================================== #
-#  STEP 1 · Bayesian LDA (PyMC + NUTS); K by held-out predictive log-likelihood #
-# =========================================================================== #
-def _fit_one_k(job: tuple) -> dict:
-    """Fit the marginalized LDA for a single K on the TRAIN tokens and return the
-    selection metrics (held-out predictive lppd; WAIC & PSIS-LOO as diagnostics)
-    plus the single-chain posterior. Module-level (picklable) for worker processes.
-
-    Generative model (z marginalized so NUTS sees only continuous simplices):
-        phi_k   ~ Dirichlet(beta)
-        theta_m ~ Dirichlet(alpha)
-        w_mn    ~ Categorical(theta_m @ phi)
-
-    Pass empty test arrays to fit on the full corpus (used for the final refit).
-    """
-    (K, doc_tr, word_tr, doc_te, word_te, V, M, draws, tune, chains, seed,
-     nuts_sampler, progressbar) = job
-
-    with pm.Model() as m:
-        phi = pm.Dirichlet("phi", a=BETA_PRIOR * np.ones(V), shape=(K, V))
-        theta = pm.Dirichlet("theta", a=ALPHA_PRIOR * np.ones(K), shape=(M, K))
-        p = pm.math.dot(theta, phi)                              # (M, V)
-        pm.Categorical("w", p=p[doc_tr], observed=word_tr)       # fit on TRAIN tokens
-
-        common = dict(draws=draws, tune=tune, chains=chains,
-                      random_seed=seed + K, progressbar=progressbar)
-        if nuts_sampler in ("numpyro", "blackjax"):
-            # JAX backend: run all chains *vectorized* (vmap) in one JIT kernel,
-            # which on a single CPU device makes extra chains nearly free.
-            # We call the jax sampler directly because pm.sample funnels
-            # nuts_sampler_kwargs into the NUTS *kernel*, not chain_method.
-            from pymc.sampling import jax as _pmjax
-            sampler_fn = (_pmjax.sample_numpyro_nuts if nuts_sampler == "numpyro"
-                          else _pmjax.sample_blackjax_nuts)
-            idata = sampler_fn(model=m, chain_method="vectorized",
-                               compute_convergence_checks=False, **common)
-        else:                                                    # e.g. "nutpie"
-            idata = pm.sample(nuts_sampler=nuts_sampler, cores=1,
-                              compute_convergence_checks=False, **common)
-
-    th = idata.posterior["theta"].values                        # (C, D, M, K)
-    ph = idata.posterior["phi"].values                          # (C, D, K, V)
-    C, D = th.shape[:2]
-    theta_s = th.reshape(C * D, M, K)                           # pool chains (S=C*D)
-    phi_s = ph.reshape(C * D, K, V)
-
-    # ---- in-sample diagnostics on TRAIN tokens --------------------------------
-    # label-invariant (depend only on theta@phi), so pooling chains is safe.
-    loglik_tr = _pointwise_loglik(theta_s, phi_s, doc_tr, word_tr)   # (S, N_tr)
-    waic = _waic(loglik_tr)
-    loo = _loo_from_loglik(loglik_tr.reshape(C, D, -1))
-
-    # ---- PRIMARY selection metric: out-of-sample predictive on HELD-OUT tokens -
-    heldout_lppd = _heldout_lppd(theta_s, phi_s, doc_te, word_te)
-
-    # ---- within-chain ESS of the chain we KEEP (chain 0). Cross-chain ESS is
-    #      meaningless under label switching, so we slice to one chain first. ----
-    ess = az.ess(idata.posterior.isel(chain=[0]), var_names=["phi"])["phi"]
-
-    return {
-        "K": K, "waic": waic, "loo": loo, "heldout_lppd": heldout_lppd,
-        "phi_c0": ph[0],                                         # (S, K, V) chain 0
-        "theta_c0": th[0],                                       # (S, M, K) chain 0
-        "ess_min": float(ess.min()), "ess_med": float(ess.median()),
-    }
-
-
-def train_lda(df: pd.DataFrame,
-              k_values: Sequence[int] = (2, 4, 6, 8, 10, 12),
-              n_train: int = 400,
-              vocab_size: int = 60,
-              min_df: int = 5,
-              draws: int = 300,
-              tune: int = 400,
-              chains: int = 2,
-              seed: int = 42,
-              nuts_sampler: str = "nutpie",
-              parallel: bool = True,
-              progressbar: bool = False,
-              holdout_frac: float = 0.15) -> LDAModel:
-    """Fit Bayesian LDA for several K, pick K by *held-out* predictive
-    log-likelihood, then refit the winning K on the full corpus and return its
-    posterior.
-
-    Generative model (z marginalized for NUTS):
-        phi_k ~ Dirichlet(beta)            # ingredient distribution for topic k
-        theta_m ~ Dirichlet(alpha)         # topic distribution for recipe m
-        w_mn ~ Categorical(theta_m @ phi)  # observed ingredient (z integrated out)
-
-    Model selection is out-of-sample: a fraction of tokens is held out, every K is
-    fit on the rest, and the winner maximizes the held-out predictive density.
-    WAIC and PSIS-LOO are still computed (on the training tokens) and reported as
-    diagnostics, but they are in-sample and tend to keep improving with K, so they
-    are NOT used to choose K. The winning K is then refit on the *full* corpus.
-    """
-    doc_idx, word_idx, vocab, ingr2idx, M = _build_corpus(
-        df, n_train=n_train, vocab_size=vocab_size, min_df=min_df, seed=seed)
-    V = len(vocab)
-    print(f"[train_lda] corpus: {M} recipes, {len(word_idx)} ingredient tokens, "
-          f"vocab V={V}")
-
-    empty = np.empty(0, dtype="int64")
-
-    def _row(f: dict) -> dict:                 # one model-comparison table row
-        return {"K": f["K"], "heldout_lppd": f["heldout_lppd"],
-                "waic": f["waic"]["waic"], "p_waic": f["waic"]["p_waic"],
-                "elpd_loo": f["loo"]["elpd_loo"], "p_loo": f["loo"]["p_loo"],
-                "pct_bad_k": f["loo"]["pct_bad_k"]}
-
-    if len(k_values) == 1:
-        # ---- Directly-chosen K: no selection, no held-out split, so we do a
-        #      SINGLE fit on the full corpus and skip the redundant diagnostic fit.
-        best_k = int(k_values[0])
-        print(f"[train_lda] single K={best_k}: one fit on the full corpus "
-              f"(sampler={nuts_sampler}) ...")
-        final = _fit_one_k((best_k, doc_idx, word_idx, empty, empty, V, M, draws,
-                            tune, chains, seed, nuts_sampler, progressbar))
-        table = pd.DataFrame([_row(final)])    # held-out NaN; WAIC/LOO are in-sample
-    else:
-        # ---- Out-of-sample model selection over the K grid ----------------------
-        # One shared train/held-out token split, reused for every K (fair).
-        train_mask, test_mask = _holdout_split(doc_idx, word_idx, frac=holdout_frac,
-                                               seed=seed)
-        doc_tr, word_tr = doc_idx[train_mask], word_idx[train_mask]
-        doc_te, word_te = doc_idx[test_mask], word_idx[test_mask]
-        print(f"[train_lda] holdout: {len(word_tr)} train / {len(word_te)} "
-              f"held-out tokens")
-
-        jobs = [(K, doc_tr, word_tr, doc_te, word_te, V, M, draws, tune, chains,
-                 seed, nuts_sampler, progressbar) for K in k_values]
-        if parallel and len(jobs) > 1:
-            import os
-            from concurrent.futures import ProcessPoolExecutor
-            max_workers = min(len(jobs), max(1, (os.cpu_count() or 2) // 2))
-            print(f"[train_lda] fitting K={list(k_values)} in parallel "
-                  f"({max_workers} workers, sampler={nuts_sampler}) ...")
-            with ProcessPoolExecutor(max_workers=max_workers) as ex:
-                fitted = list(ex.map(_fit_one_k, jobs))
-        else:
-            print(f"[train_lda] fitting K={list(k_values)} sequentially "
-                  f"(sampler={nuts_sampler}) ...")
-            fitted = [_fit_one_k(j) for j in jobs]
-
-        table = pd.DataFrame([_row(f) for f in fitted])
-        if table["heldout_lppd"].notna().any():
-            table = table.sort_values("heldout_lppd",
-                                      ascending=False).reset_index(drop=True)
-            sel_by = "held-out predictive lppd"
-        else:                                  # no tokens held out -> fall back
-            table = table.sort_values("waic").reset_index(drop=True)
-            sel_by = "WAIC"
-        best_k = int(table.iloc[0]["K"])
-        print(f"[train_lda] selected K={best_k} by {sel_by}")
-
-        # ---- Refit the winning K on the FULL corpus (CV picks K; refit all data)
-        print(f"[train_lda] refitting K={best_k} on the full corpus ...")
-        final = _fit_one_k((best_k, doc_idx, word_idx, empty, empty, V, M, draws,
-                            tune, chains, seed, nuts_sampler, progressbar))
-
-    # ---- Assemble the winning model's posterior (single chain => coherent topic
-    #      labels; label switching makes cross-chain topics incomparable). ------
-    phi_chain0 = final["phi_c0"]                                 # (S, K, V)
-    theta_chain0 = final["theta_c0"]                            # (S, M, K)
-
-    # ---- Empirical marginal topic prior  P(topic) -----------------------------
-    # Marginal probability a random ingredient-slot belongs to topic k, i.e. the
-    # average recipe topic mix, averaged over posterior samples. Fully Bayesian.
-    topic_prior = theta_chain0.mean(axis=(0, 1))                 # (K,)
-    topic_prior = topic_prior / topic_prior.sum()
-
-    topic_labels = _label_topics(phi_chain0.mean(axis=0), vocab)
-
-    return LDAModel(best_k=best_k, phi_samples=phi_chain0, topic_prior=topic_prior,
-                    vocab=vocab, ingr2idx=ingr2idx, topic_labels=topic_labels,
-                    waic_table=table, idata=None,
-                    ess_min=final["ess_min"], ess_median=final["ess_med"])
-
-
 def _label_topics(phi_mean: np.ndarray, vocab: list[str], top_n: int = 3) -> list[str]:
     """Human-readable label for each topic = its top ingredients (by posterior
     mean phi). Used for `flavor_tags`."""
@@ -592,6 +263,238 @@ def _label_topics(phi_mean: np.ndarray, vocab: list[str], top_n: int = 3) -> lis
         top = np.argsort(phi_mean[k])[::-1][:top_n]
         labels.append(" / ".join(vocab[i] for i in top))
     return labels
+
+
+# =========================================================================== #
+#  STEP 1 · sklearn point-estimate phi + Bootstrap pseudo-posterior            #
+# =========================================================================== #
+# A fully-Bayesian NUTS fit of phi's posterior does not scale past a few hundred
+# recipes, so we:
+#   (1) fit ONE sklearn LDA on the FULL corpus -> point estimate phi_hat;
+#   (2) approximate phi's uncertainty by BOOTSTRAP: refit on resampled recipes B
+#       times, each warm-started from phi_hat, and keep the B fits as pseudo-samples.
+# Each Bootstrap fit's topics are re-ordered to phi_hat with the Hungarian matcher
+# (topic_alignment.align_phi), so phi_samples[:, k, :] is a coherent "topic k"
+# across draws.
+#
+# Honest caveat (see README): on a large corpus phi is very well determined, so the
+# Bootstrap spread is small *by design*. We therefore call it "bootstrap stability",
+# NOT "posterior uncertainty": it measures how stable phi_hat is under resampling,
+# not a Bayesian posterior. The genuinely uncertain quantity is the *user's* topic
+# posterior (Step 3), which is inferred from a handful of ingredients -- and that
+# stays fully Bayesian. We use the m-out-of-n Bootstrap (resample BOOTSTRAP_SIZE
+# recipes per replicate, not all N): it is a recognized Bootstrap variant and keeps
+# each refit's E-step cheap enough to run B of them in seconds.
+
+# default size of each Bootstrap resample (m-out-of-n). Capped at the corpus size.
+_HYBRID_BOOTSTRAP_SIZE = 10_000
+
+
+def _build_doc_term_matrix(df: pd.DataFrame, vocab_top_n: int, min_df: int):
+    """Full-corpus sparse document-term count matrix for sklearn LDA.
+
+    Reuses the cached, normalized ingredient lists (`_get_recipe_ingredients`) so we
+    canonicalize the catalogue only once. Vocabulary = the `vocab_top_n` most
+    frequent ingredients (by document frequency, with a `min_df` floor). Row order
+    matches `df`, but downstream never relies on that: recipe flavor profiles are
+    recomputed from `phi_samples` + `ingr2idx`, not from this matrix.
+
+    Returns
+    -------
+    X : scipy.sparse.csr_matrix, shape (n_recipes, V)   (counts; effectively 0/1)
+    vocab : list[str]
+    ingr2idx : dict[str, int]
+    """
+    from collections import Counter
+    from scipy.sparse import csr_matrix
+
+    lists = _get_recipe_ingredients(df)
+    dfc = Counter()
+    for lst in lists:
+        dfc.update(set(lst))
+    vocab = [w for w, c in dfc.most_common() if c >= min_df][:vocab_top_n]
+    ingr2idx = {w: i for i, w in enumerate(vocab)}
+
+    rows, cols = [], []
+    for m, lst in enumerate(lists):
+        for w in set(lst):                       # dedup -> binary presence counts
+            j = ingr2idx.get(w)
+            if j is not None:
+                rows.append(m)
+                cols.append(j)
+    X = csr_matrix((np.ones(len(rows), dtype=np.float64), (rows, cols)),
+                   shape=(len(lists), len(vocab)))
+    return X, vocab, ingr2idx
+
+
+def _fit_sklearn_lda(X, K, alpha, beta, *, max_iter, random_state, n_jobs=1,
+                     max_doc_update_iter=30, learning_method="batch"):
+    """One sklearn LatentDirichletAllocation fit. Centralized so the K-sweep and the
+    main fit share identical hyper-parameters."""
+    from sklearn.decomposition import LatentDirichletAllocation
+    return LatentDirichletAllocation(
+        n_components=K, doc_topic_prior=alpha, topic_word_prior=beta,
+        learning_method=learning_method, max_iter=max_iter,
+        max_doc_update_iter=max_doc_update_iter, random_state=random_state,
+        n_jobs=n_jobs).fit(X)
+
+
+def _select_k_perplexity(X, K_candidates, alpha, beta, random_state,
+                         k_select_size=12_000, holdout_frac=0.10, max_iter=8):
+    """Choose K by held-out perplexity (lower = better).
+
+    Runs on a random sub-sample of `k_select_size` recipes (K is a coarse structural
+    choice that a sub-sample determines amply, and a full-corpus sweep would dominate
+    the wall-time). For each K: fit on 90%, score perplexity on the held-out 10%.
+    Returns (best_K, table) where table has columns K, holdout_perplexity.
+    """
+    rng = np.random.default_rng(random_state)
+    N = X.shape[0]
+    sel = rng.permutation(N)[:min(k_select_size, N)]
+    Xs = X[sel]
+    cut = max(1, int(Xs.shape[0] * (1.0 - holdout_frac)))
+    Xtr, Xte = Xs[:cut], Xs[cut:]
+
+    rows = []
+    for K in K_candidates:
+        m = _fit_sklearn_lda(Xtr, int(K), alpha, beta, max_iter=max_iter,
+                             random_state=random_state)
+        rows.append({"K": int(K), "holdout_perplexity": float(m.perplexity(Xte))})
+        print(f"[train_lda]   K={int(K):>2d}  "
+              f"holdout_perplexity={rows[-1]['holdout_perplexity']:.1f}")
+    table = pd.DataFrame(rows)
+    best_K = int(table.loc[table["holdout_perplexity"].idxmin(), "K"])
+    return best_K, table
+
+
+def _bootstrap_fit_one(args: tuple) -> np.ndarray:
+    """One Bootstrap refit, warm-started from phi_hat and aligned back to it.
+
+    Module-level and self-contained (imports inside) so it is picklable for joblib
+    worker processes and cheap to spawn (no heavy top-level deps). `Xb` is the pre-resampled
+    (m, V) matrix; the parent does the resampling so workers receive only what they
+    need.
+
+    Warm start: initialize the variational topic-word parameter `components_`
+    (Dirichlet lambda) at `phi_hat * m + beta` so the fit starts at the point
+    estimate, then run a few online `partial_fit` passes on the resample. We refresh
+    sklearn's cached `exp(E[log beta])` from the injected components with scipy's
+    digamma -- no fragile private sklearn internals beyond `_init_latent_vars`.
+    """
+    Xb, K, V, alpha, beta, phi_hat, n_warm_iter, max_doc_update_iter, seed = args
+    from sklearn.decomposition import LatentDirichletAllocation
+    from scipy.special import psi
+    from topic_alignment import align_phi
+
+    m = Xb.shape[0]
+    lda = LatentDirichletAllocation(
+        n_components=K, doc_topic_prior=alpha, topic_word_prior=beta,
+        learning_method="online", max_iter=1,
+        max_doc_update_iter=max_doc_update_iter, random_state=seed, n_jobs=1)
+    lda._init_latent_vars(V)                                  # allocate components_
+    lda.components_ = phi_hat * float(m) + beta               # warm start at phi_hat
+    lda.exp_dirichlet_component_ = np.exp(
+        psi(lda.components_) - psi(lda.components_.sum(axis=1))[:, None])
+    lda.n_batch_iter_ = 0
+    for _ in range(n_warm_iter):
+        lda.partial_fit(Xb)
+    phi_b = lda.components_ / lda.components_.sum(axis=1, keepdims=True)
+    return align_phi(phi_hat, phi_b)                          # (K, V), topic-aligned
+
+
+def train_lda(df: pd.DataFrame,
+              K: int | None = None,
+              K_candidates: Sequence[int] = (4, 6, 8, 10, 12),
+              n_bootstrap: int = 50,
+              vocab_top_n: int = 500,
+              alpha: float = ALPHA_PRIOR,
+              beta: float = BETA_PRIOR,
+              random_state: int = 42,
+              n_jobs: int = -1,
+              *,
+              min_df: int = 5,
+              bootstrap_size: int | None = None,
+              n_warm_iter: int = 2,
+              max_doc_update_iter: int = 8,
+              main_max_iter: int = 8) -> LDAModel:
+    """Step 1: fit the LDA topic model and return an `LDAModel`.
+
+    sklearn point estimate of phi on the full corpus + Bootstrap pseudo-posterior:
+
+      1. Build the full-corpus doc-term matrix (vocab = top `vocab_top_n` ingredients).
+      2. If `K` is None, choose it by held-out perplexity over `K_candidates`.
+      3. Fit ONE sklearn LDA on the full corpus  -> phi_hat (the point estimate).
+      4. Bootstrap `n_bootstrap` times (m-out-of-n resample, warm-started from
+         phi_hat, parallel) and align each fit to phi_hat  -> phi_samples.
+      5. Empirical topic prior P(topic) = mean doc-topic mixture (from transform).
+
+    Returns an `LDAModel` (phi_samples, phi_mean, topic_prior, vocab, ingr2idx,
+    topic_labels, perplexity_table, bootstrap_stability) that Steps 2-5 consume.
+
+    `K` defaults to None (auto-select). `alpha`/`beta` are the sklearn
+    doc_topic_prior / topic_word_prior. NB: `phi_samples`' spread is *bootstrap
+    stability*, not a Bayesian posterior -- on a large corpus phi is well determined,
+    so it is small by design; the genuinely uncertain, fully-Bayesian quantity is the
+    user's topic posterior (Step 3). See module docstring / README.
+    """
+    X, vocab, ingr2idx = _build_doc_term_matrix(df, vocab_top_n, min_df)
+    N, V = X.shape
+    print(f"[train_lda] corpus: {N} recipes, vocab V={V}, "
+          f"{int(X.nnz)} ingredient tokens")
+
+    # ---- Step 2: choose K (held-out perplexity) unless the user fixed it --------
+    if K is None:
+        print(f"[train_lda] selecting K from {tuple(K_candidates)} "
+              f"by held-out perplexity ...")
+        best_K, perp_table = _select_k_perplexity(
+            X, K_candidates, alpha, beta, random_state, max_iter=main_max_iter)
+        print(f"[train_lda] selected K={best_K}")
+    else:
+        best_K = int(K)
+        perp_table = pd.DataFrame(columns=["K", "holdout_perplexity"])
+        print(f"[train_lda] K fixed at {best_K} (no sweep)")
+
+    # ---- Step 3: main fit on the FULL corpus -> phi_hat ------------------------
+    print(f"[train_lda] main fit (K={best_K}) on the full corpus ...")
+    main = _fit_sklearn_lda(X, best_K, alpha, beta, max_iter=main_max_iter,
+                            random_state=random_state, n_jobs=n_jobs)
+    phi_hat = main.components_ / main.components_.sum(axis=1, keepdims=True)  # (K,V)
+
+    # ---- Step 5 (prior): empirical marginal P(topic) from the doc-topic mix ----
+    # = average recipe topic mixture, the sklearn analogue of the full-Bayes
+    #   "mean theta". transform() is an E-step; do it on a sub-sample for speed.
+    rng = np.random.default_rng(random_state)
+    prior_idx = rng.permutation(N)[:min(N, 15_000)]
+    theta = main.transform(X[prior_idx])                       # (n_sub, K)
+    topic_prior = theta.mean(axis=0)
+    topic_prior = topic_prior / topic_prior.sum()
+
+    # ---- Step 4: Bootstrap pseudo-posterior of phi (parallel, m-out-of-n) ------
+    m = min(bootstrap_size or _HYBRID_BOOTSTRAP_SIZE, N)
+    print(f"[train_lda] bootstrap: {n_bootstrap} refits, m={m} recipes each, "
+          f"warm-started (n_jobs={n_jobs}) ...")
+
+    def _jobs():
+        for b in range(n_bootstrap):
+            idx = rng.integers(0, N, size=m)                  # resample WITH replace
+            yield (X[idx], best_K, V, alpha, beta, phi_hat, n_warm_iter,
+                   max_doc_update_iter, random_state + 1 + b)
+
+    from joblib import Parallel, delayed
+    samples = Parallel(n_jobs=n_jobs)(
+        delayed(_bootstrap_fit_one)(job) for job in _jobs())
+    phi_samples = np.stack(samples, axis=0)                    # (B, K, V), aligned
+
+    bootstrap_stability = float(phi_samples.std(axis=0).mean())
+    print(f"[train_lda] bootstrap_stability (mean phi std) = "
+          f"{bootstrap_stability:.5f}")
+
+    topic_labels = _label_topics(phi_hat, vocab)
+    return LDAModel(
+        best_k=best_K, phi_samples=phi_samples, phi_mean=phi_hat,
+        topic_prior=topic_prior, vocab=vocab, ingr2idx=ingr2idx,
+        topic_labels=topic_labels, perplexity_table=perp_table,
+        bootstrap_stability=bootstrap_stability)
 
 
 # =========================================================================== #
@@ -647,9 +550,9 @@ def infer_user_posterior(ingredients: Sequence[str], model: LDAModel,
         P(ingredients | topic=k) = Π_i phi[k, i]      (ingredients independent | topic)
         P(topic=k)               = empirical marginal topic frequency
 
-    We do this for every MCMC sample s of phi, giving a posterior over the topic
-    weights that *carries the model's uncertainty* (rather than using a single
-    point estimate of phi).
+    We do this for every Bootstrap sample s of phi, giving a posterior over the topic
+    weights that *carries the model's uncertainty* (rather than collapsing phi's
+    Bootstrap spread to a single point estimate).
 
     Note: this same routine is reused to profile *recipes* (Step 4) -- a recipe's
     flavor profile is just the topic posterior of its own ingredient list.
@@ -685,12 +588,12 @@ def infer_user_posterior(ingredients: Sequence[str], model: LDAModel,
 # =========================================================================== #
 def _kl_similarity(recipe_post: np.ndarray, user_post: np.ndarray
                    ) -> tuple[float, float]:
-    """Flavor alignment = exp(-KL(recipe || user)), averaged over MCMC samples.
+    """Flavor alignment = exp(-KL(recipe || user)), averaged over Bootstrap samples.
 
     recipe_post, user_post : (S, K)  -- paired sample-by-sample (same phi draw s),
-    so the KL is evaluated within a single coherent posterior draw and then
-    averaged. We also return the std of the per-sample similarity, which becomes
-    the recipe's `posterior_uncertainty`.
+    so the KL is evaluated within a single coherent draw and then averaged. We also
+    return the std of the per-sample similarity, which becomes the recipe's
+    `posterior_uncertainty` (bootstrap stability; small as phi is well determined).
     """
     kl = np.sum(recipe_post * (np.log(recipe_post + _EPS) - np.log(user_post + _EPS)),
                 axis=1)                                              # (S,)

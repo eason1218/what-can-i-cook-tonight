@@ -17,8 +17,8 @@ flowchart LR
       direction LR
       A["Food.com raw data<br/>RAW_recipes + RAW_interactions"]
       A -->|"prepare_data.py · clean / normalize"| B["recipes_clean.csv<br/>53,573 recipes"]
-      B --> C["<b>Step 1 · train_lda</b> — Bayesian LDA (NUTS)<br/>phi~Dir(0.01), theta~Dir(0.1), w~Cat(theta·phi) — z marginalized<br/>hold out 15% tokens → choose K by held-out lppd<br/>refit best K on full corpus"]
-      C --> D["phi posterior samples (S×K×V)<br/>→ <b>lda_model.pkl</b> (final model)"]
+      B --> C["<b>Step 1 · train_lda</b> — sklearn LDA point estimate φ̂ (full corpus)<br/>phi~Dir(0.01), theta~Dir(0.1)<br/>+ Bootstrap pseudo-posterior (Hungarian-aligned)<br/>choose K by held-out perplexity"]
+      C --> D["phi Bootstrap samples (B×K×V)<br/>→ <b>lda_model.pkl</b> (final model)"]
     end
     subgraph ON["ONLINE · answer a query / 回答查询"]
       direction LR

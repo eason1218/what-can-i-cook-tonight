@@ -1,53 +1,54 @@
 {
-  "selected_K": 6,
-  "selection_metric": "K chosen directly; held-out lppd / WAIC / LOO are diagnostics",
-  "model_comparison": [
+  "selected_K": 4,
+  "selection_metric": "held-out perplexity (lower=better) on the full corpus",
+  "train_wall_seconds": 43.0,
+  "n_recipes_trained": 53573,
+  "perplexity_by_K": [
+    {
+      "K": 4,
+      "holdout_perplexity": 288.98004649473285
+    },
     {
       "K": 6,
-      "heldout_lppd": NaN,
-      "waic": 17134.651,
-      "p_waic": 618.819,
-      "elpd_loo": -8573.877,
-      "p_loo": 625.37,
-      "pct_bad_k": 0.377
+      "holdout_perplexity": 322.2197630322265
+    },
+    {
+      "K": 8,
+      "holdout_perplexity": 364.06373619498555
+    },
+    {
+      "K": 10,
+      "holdout_perplexity": 402.88041735421444
+    },
+    {
+      "K": 12,
+      "holdout_perplexity": 447.0070165725066
     }
   ],
+  "bootstrap_stability": 0.000441,
+  "n_bootstrap": 50,
   "topics": [
     {
       "topic": 0,
-      "label": "onion / salt / sour cream",
-      "P(topic)": 0.1535
+      "label": "cheddar cheese / onion / green onion",
+      "P(topic)": 0.1886
     },
     {
       "topic": 1,
-      "label": "flour / egg / salt",
-      "P(topic)": 0.1544
+      "label": "olive oil / salt / parmesan cheese",
+      "P(topic)": 0.2455
     },
     {
       "topic": 2,
-      "label": "sugar / flour / egg",
-      "P(topic)": 0.1843
+      "label": "salt / onion / water",
+      "P(topic)": 0.228
     },
     {
       "topic": 3,
-      "label": "water / salt / sugar",
-      "P(topic)": 0.1173
-    },
-    {
-      "topic": 4,
-      "label": "onion / salt / garlic clove",
-      "P(topic)": 0.2065
-    },
-    {
-      "topic": 5,
-      "label": "olive oil / garlic clove / black pepper",
-      "P(topic)": 0.184
+      "label": "egg / salt / flour",
+      "P(topic)": 0.3379
     }
   ],
-  "ess_phi_chain0": {
-    "min": 1.3,
-    "median": 6.5
-  },
   "recommendations": {
     "Italian-ish": {
       "ingredients": [
@@ -65,73 +66,73 @@
       "top5": [
         {
           "recipe_name": "tomato sandwich from italy",
-          "score": 2.6572,
+          "score": 2.7412,
           "coverage": "6/7 ingredients",
           "missing_ingredients": [
             "italian bread"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.803,
-          "posterior_uncertainty": 0.1152
-        },
-        {
-          "recipe_name": "pasta with oil and garlic sauce",
-          "score": 2.2779,
-          "coverage": "5/6 ingredients",
-          "missing_ingredients": [
-            "parsley"
-          ],
-          "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
-          ],
-          "predicted_rating": 4.625,
-          "posterior_uncertainty": 0.0211
+          "posterior_uncertainty": 0.0
         },
         {
           "recipe_name": "garlicky tomato bruschetta",
-          "score": 2.2558,
+          "score": 2.2959,
           "coverage": "5/6 ingredients",
           "missing_ingredients": [
             "french bread"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.634,
-          "posterior_uncertainty": 0.0556
+          "posterior_uncertainty": 0.0
+        },
+        {
+          "recipe_name": "pasta with oil and garlic sauce",
+          "score": 2.2914,
+          "coverage": "5/6 ingredients",
+          "missing_ingredients": [
+            "parsley"
+          ],
+          "flavor_tags": [
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
+          ],
+          "predicted_rating": 4.625,
+          "posterior_uncertainty": 0.0
+        },
+        {
+          "recipe_name": "baked parmesan tomatoes",
+          "score": 2.2415,
+          "coverage": "5/6 ingredients",
+          "missing_ingredients": [
+            "oregano"
+          ],
+          "flavor_tags": [
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
+          ],
+          "predicted_rating": 4.524,
+          "posterior_uncertainty": 0.0
         },
         {
           "recipe_name": "fresh mozzarella tomato basil salad",
-          "score": 2.1963,
+          "score": 2.2371,
           "coverage": "5/6 ingredients",
           "missing_ingredients": [
             "mozzarella cheese"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.515,
-          "posterior_uncertainty": 0.0796
-        },
-        {
-          "recipe_name": "tomato basil pizza sauce",
-          "score": 2.1953,
-          "coverage": "5/6 ingredients",
-          "missing_ingredients": [
-            "diced tomato"
-          ],
-          "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
-          ],
-          "predicted_rating": 4.446,
-          "posterior_uncertainty": 0.0262
+          "posterior_uncertainty": 0.0
         }
       ]
     },
@@ -149,72 +150,64 @@
       ],
       "top5": [
         {
-          "recipe_name": "strawberry jam tarts  cookies",
-          "score": 3.2812,
-          "coverage": "8/9 ingredients",
-          "missing_ingredients": [
-            "strawberry jam"
-          ],
-          "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
-          ],
-          "predicted_rating": 4.803,
-          "posterior_uncertainty": 0.0
-        },
-        {
-          "recipe_name": "blueberry cake cupcakes",
-          "score": 3.2235,
-          "coverage": "8/9 ingredients",
-          "missing_ingredients": [
-            "blueberry"
-          ],
-          "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
-          ],
-          "predicted_rating": 4.718,
-          "posterior_uncertainty": 0.0
-        },
-        {
-          "recipe_name": "pikelets  australian pancakes",
-          "score": 3.0636,
-          "coverage": "7/8 ingredients",
-          "missing_ingredients": [
-            "self raising flour"
-          ],
-          "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
-          ],
-          "predicted_rating": 4.874,
-          "posterior_uncertainty": 0.0101
-        },
-        {
           "recipe_name": "crustless baked custard pie",
-          "score": 2.8902,
+          "score": 3.725,
           "coverage": "7/7 ingredients",
           "missing_ingredients": [],
           "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
+            "egg / salt / flour",
+            "olive oil / salt / parmesan cheese"
           ],
           "predicted_rating": 4.508,
-          "posterior_uncertainty": 0.1939
+          "posterior_uncertainty": 0.0
         },
         {
-          "recipe_name": "hershey s chewy chocolate cookies",
-          "score": 2.8127,
-          "coverage": "7/8 ingredients",
-          "missing_ingredients": [
-            "cocoa"
-          ],
+          "recipe_name": "giant sized popovers",
+          "score": 3.4366,
+          "coverage": "6/6 ingredients",
+          "missing_ingredients": [],
           "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
+            "egg / salt / flour",
+            "olive oil / salt / parmesan cheese"
           ],
-          "predicted_rating": 4.492,
-          "posterior_uncertainty": 0.0151
+          "predicted_rating": 4.424,
+          "posterior_uncertainty": 0.0001
+        },
+        {
+          "recipe_name": "finnish kropser  baked pancakes",
+          "score": 3.3817,
+          "coverage": "6/6 ingredients",
+          "missing_ingredients": [],
+          "flavor_tags": [
+            "egg / salt / flour",
+            "olive oil / salt / parmesan cheese"
+          ],
+          "predicted_rating": 4.353,
+          "posterior_uncertainty": 0.0001
+        },
+        {
+          "recipe_name": "single crepe",
+          "score": 3.3631,
+          "coverage": "6/6 ingredients",
+          "missing_ingredients": [],
+          "flavor_tags": [
+            "egg / salt / flour",
+            "olive oil / salt / parmesan cheese"
+          ],
+          "predicted_rating": 4.329,
+          "posterior_uncertainty": 0.0
+        },
+        {
+          "recipe_name": "all purpose dinner crepes batter",
+          "score": 3.3571,
+          "coverage": "5/5 ingredients",
+          "missing_ingredients": [],
+          "flavor_tags": [
+            "egg / salt / flour",
+            "olive oil / salt / parmesan cheese"
+          ],
+          "predicted_rating": 4.749,
+          "posterior_uncertainty": 0.0112
         }
       ]
     },
@@ -240,75 +233,74 @@
       "top5": [
         {
           "recipe_name": "tomato sandwich from italy",
-          "score": 2.6572,
+          "score": 2.7412,
           "coverage": "6/7 ingredients",
           "missing_ingredients": [
             "italian bread"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.803,
-          "posterior_uncertainty": 0.1152
+          "posterior_uncertainty": 0.0
         },
         {
           "recipe_name": "garlicky tomato bruschetta",
-          "score": 2.2558,
+          "score": 2.2959,
           "coverage": "5/6 ingredients",
           "missing_ingredients": [
             "french bread"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.634,
-          "posterior_uncertainty": 0.0556
+          "posterior_uncertainty": 0.0
+        },
+        {
+          "recipe_name": "baked parmesan tomatoes",
+          "score": 2.2415,
+          "coverage": "5/6 ingredients",
+          "missing_ingredients": [
+            "oregano"
+          ],
+          "flavor_tags": [
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
+          ],
+          "predicted_rating": 4.524,
+          "posterior_uncertainty": 0.0
         },
         {
           "recipe_name": "fresh mozzarella tomato basil salad",
-          "score": 2.1963,
+          "score": 2.2371,
           "coverage": "5/6 ingredients",
           "missing_ingredients": [
             "mozzarella cheese"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.515,
-          "posterior_uncertainty": 0.0796
+          "posterior_uncertainty": 0.0
         },
         {
-          "recipe_name": "baked parmesan tomatoes",
-          "score": 2.1792,
-          "coverage": "5/6 ingredients",
+          "recipe_name": "fresh tomato spaghetti sauce",
+          "score": 2.0724,
+          "coverage": "7/9 ingredients",
           "missing_ingredients": [
-            "oregano"
+            "parsley",
+            "sugar"
           ],
           "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
+            "olive oil / salt / parmesan cheese",
+            "salt / onion / water"
           ],
-          "predicted_rating": 4.524,
-          "posterior_uncertainty": 0.0748
-        },
-        {
-          "recipe_name": "balsamic tomato basil pasta",
-          "score": 1.8324,
-          "coverage": "7/10 ingredients",
-          "missing_ingredients": [
-            "balsamic vinegar",
-            "sea salt",
-            "oregano"
-          ],
-          "flavor_tags": [
-            "onion / salt / garlic clove",
-            "olive oil / garlic clove / black pepper"
-          ],
-          "predicted_rating": 4.528,
-          "posterior_uncertainty": 0.0028
+          "predicted_rating": 4.146,
+          "posterior_uncertainty": 0.0
         }
       ]
     },
@@ -329,70 +321,70 @@
       },
       "top5": [
         {
-          "recipe_name": "strawberry jam tarts  cookies",
-          "score": 3.2812,
-          "coverage": "8/9 ingredients",
+          "recipe_name": "crustless baked custard pie",
+          "score": 3.725,
+          "coverage": "7/7 ingredients",
+          "missing_ingredients": [],
+          "flavor_tags": [
+            "egg / salt / flour",
+            "olive oil / salt / parmesan cheese"
+          ],
+          "predicted_rating": 4.508,
+          "posterior_uncertainty": 0.0
+        },
+        {
+          "recipe_name": "self rising flour  america",
+          "score": 1.4369,
+          "coverage": "3/4 ingredients",
           "missing_ingredients": [
-            "strawberry jam"
+            "baking powder"
           ],
           "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
+            "egg / salt / flour",
+            "salt / onion / water"
           ],
-          "predicted_rating": 4.803,
+          "predicted_rating": 4.841,
           "posterior_uncertainty": 0.0
         },
         {
           "recipe_name": "amish friendship starter",
-          "score": 1.7917,
+          "score": 2.5163,
           "coverage": "3/3 ingredients",
           "missing_ingredients": [],
           "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
+            "egg / salt / flour",
+            "salt / onion / water"
           ],
           "predicted_rating": 4.779,
-          "posterior_uncertainty": 0.2826
+          "posterior_uncertainty": 0.0019
         },
         {
-          "recipe_name": "pancake souffle",
-          "score": 2.6671,
-          "coverage": "5/5 ingredients",
-          "missing_ingredients": [],
-          "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
-          ],
-          "predicted_rating": 4.458,
-          "posterior_uncertainty": 0.1684
-        },
-        {
-          "recipe_name": "pikelets  australian pancakes",
-          "score": 3.0636,
-          "coverage": "7/8 ingredients",
-          "missing_ingredients": [
-            "self raising flour"
-          ],
-          "flavor_tags": [
-            "sugar / flour / egg",
-            "flour / egg / salt"
-          ],
-          "predicted_rating": 4.874,
-          "posterior_uncertainty": 0.0101
-        },
-        {
-          "recipe_name": "eat sum more  shortbread cookies",
-          "score": 1.0923,
+          "recipe_name": "easy to make peanut butter cookies",
+          "score": 1.2753,
           "coverage": "3/4 ingredients",
           "missing_ingredients": [
-            "powdered sugar"
+            "peanut butter"
           ],
           "flavor_tags": [
-            "flour / egg / salt",
-            "sugar / flour / egg"
+            "egg / salt / flour",
+            "cheddar cheese / onion / green onion"
           ],
-          "predicted_rating": 4.686,
-          "posterior_uncertainty": 0.2271
+          "predicted_rating": 4.297,
+          "posterior_uncertainty": 0.0
+        },
+        {
+          "recipe_name": "crisp butter cookies  refrigerator cookies",
+          "score": 2.3722,
+          "coverage": "5/6 ingredients",
+          "missing_ingredients": [
+            "granulated sugar"
+          ],
+          "flavor_tags": [
+            "egg / salt / flour",
+            "salt / onion / water"
+          ],
+          "predicted_rating": 4.788,
+          "posterior_uncertainty": 0.0
         }
       ]
     }

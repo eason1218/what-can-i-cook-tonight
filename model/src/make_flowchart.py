@@ -77,11 +77,11 @@ box(22, YO, 28, 13, "Food.com data", "RAW_recipes\n+ RAW_interactions", GREY_F, 
 harrow(36.5, 41.5, YO, label="prepare_data.py")
 box(55, YO, 26, 13, "data/recipes_clean.csv", "53,573 recipes", GREY_F, GREY_E)
 harrow(68.5, 74.5, YO)
-box(99, YO, 42, 15, "train_lda", "Bayesian LDA via NUTS  (z marginalized)\n"
-    "choose K by held-out predictive lppd\nrefit best K on the full corpus",
+box(99, YO, 42, 15, "train_lda", "sklearn LDA point estimate φ̂ (full corpus)\n"
+    "+ Bootstrap pseudo-posterior (aligned)\nchoose K by held-out perplexity",
     BLUE_F, BLUE_E, badge=1, fs_t=12)
 harrow(120.5, 126.5, YO)
-box(140, YO, 26, 14, "posterior φ", "samples (S×K×V)\nmodels/lda_model.pkl", GOLD_F, GOLD_E,
+box(140, YO, 26, 14, "φ samples", "Bootstrap (B×K×V)\nmodels/lda_model.pkl", GOLD_F, GOLD_E,
     fs_t=12, tcol="#7a5400")
 
 # ---- bridge: model feeds the online steps --------------------------------

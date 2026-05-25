@@ -1,18 +1,18 @@
 """
 visualize.py
 ============
-Bayesian visualizations for the LDA recipe recommender. Everything is built from
-the *cached posterior* (models/lda_model.pkl) -- no retraining -- so it runs in seconds.
+Visualizations for the hybrid LDA recipe recommender. Everything is built from the
+*cached model* (models/lda_model.pkl) -- no retraining -- so it runs in seconds.
 
 Figures (saved as PNGs):
-  figures/fig1_model_selection.png        : held-out predictive vs in-sample WAIC/LOO across K
-                                    -> why K is chosen out-of-sample (in-sample overfits)
-  figures/fig2_topic_phi_posterior.png    : top ingredients per topic with 94% credible intervals
-                                    -> "fully Bayesian": we keep distributions over phi
-  figures/fig3_user_topic_posterior.png   : P(topic | pantry) posterior over MCMC samples (Step 3)
-                                    -> the flavor profile carries uncertainty
-  figures/fig4_recommendation_uncertainty.png : flavor-alignment posterior for the Top-5
-                                    -> uncertainty propagated all the way to the ranking
+  figures/fig1_model_selection.png        : held-out perplexity across K (model selection)
+                                    -> how K is chosen on the full corpus
+  figures/fig2_topic_phi_posterior.png    : top ingredients per topic with 94% Bootstrap intervals
+                                    -> phi point estimate + Bootstrap "stability" band (small)
+  figures/fig3_user_topic_posterior.png   : P(topic | pantry) -- the user's flavor posterior (Step 3)
+                                    -> the genuinely Bayesian step (Bayes per phi-sample)
+  figures/fig4_recommendation_uncertainty.png : flavor-alignment spread for the Top-5
+                                    -> uncertainty propagated to the ranking (Bootstrap draws)
 
 Usage:  python visualize.py
 """
@@ -30,7 +30,7 @@ import recipe_recommender as rr
 
 sns.set_theme(style="whitegrid", context="talk", font_scale=0.7)
 
-DATA = "data/recipes_clean.csv"
+DATA = "../data/recipes_clean.csv"        # Stage-1 data lives in the top-level data/ dir
 MODEL = "models/lda_model.pkl"
 os.makedirs("figures", exist_ok=True)
 HDI = 94                                     # credible-interval width (%)
@@ -44,7 +44,7 @@ BAKE = ["flour", "sugar", "butter", "egg", "vanilla", "baking soda",
 
 
 def _sim_samples(recipe_post: np.ndarray, user_post: np.ndarray) -> np.ndarray:
-    """Per-MCMC-sample flavor alignment exp(-KL(recipe || user))  -> shape (S,)."""
+    """Per-Bootstrap-sample flavor alignment exp(-KL(recipe || user))  -> shape (S,)."""
     kl = np.sum(recipe_post * (np.log(recipe_post + _EPS) - np.log(user_post + _EPS)),
                 axis=1)
     return np.exp(-kl)
@@ -52,35 +52,28 @@ def _sim_samples(recipe_post: np.ndarray, user_post: np.ndarray) -> np.ndarray:
 
 # --------------------------------------------------------------------------- #
 def fig_model_selection(path="figures/fig1_model_selection.png"):
-    if not os.path.exists("model_selection.json"):
-        print("skip fig1: model_selection.json not found"); return
-    t = pd.DataFrame(json.load(open("model_selection.json"))).sort_values("K")
+    """Held-out perplexity across K (lower = better). Falls back to the model's
+    perplexity_table if model_selection.json is absent."""
+    t = None
+    if os.path.exists("model_selection.json"):
+        t = pd.DataFrame(json.load(open("model_selection.json")))
+    if t is None or t.empty or "holdout_perplexity" not in t:
+        m = rr.load_model(MODEL)
+        t = m.perplexity_table
+    if t is None or t.empty:
+        print("skip fig1: no perplexity-by-K data (model trained with a fixed K)"); return
+    t = t.sort_values("K")
     K = t["K"].to_numpy()
-    k_oos = int(K[np.argmax(t["heldout_lppd"])])
-    k_in = int(K[np.argmin(t["waic"])])
+    best = int(K[np.argmin(t["holdout_perplexity"])])
 
-    fig, ax1 = plt.subplots(figsize=(9, 5.5))
-    l1, = ax1.plot(K, t["heldout_lppd"], "o-", color="#2ca02c", lw=2.5,
-                   label="held-out lppd  (out-of-sample, ↑ better)")
-    ax1.axvline(k_oos, color="#2ca02c", ls=":", alpha=.6)
-    ax1.set_xlabel("K  (number of flavor topics)")
-    ax1.set_ylabel("held-out predictive lppd", color="#2ca02c")
-    ax1.tick_params(axis="y", labelcolor="#2ca02c")
-
-    ax2 = ax1.twinx()
-    l2, = ax2.plot(K, t["waic"], "s--", color="#d62728",
-                   label="WAIC  (in-sample, ↓ better)")
-    l3, = ax2.plot(K, -2 * t["elpd_loo"], "^--", color="#ff7f0e",
-                   label="PSIS-LOO deviance  (in-sample, ↓ better)")
-    ax2.axvline(k_in, color="#d62728", ls=":", alpha=.6)
-    ax2.set_ylabel("WAIC / LOO deviance (in-sample)")
-    ax2.grid(False)
-
-    ax1.set_title(f"Model selection: held-out peaks at K={k_oos}, but in-sample "
-                  f"WAIC/LOO keep\n'improving' to K={k_in} (overfitting) "
-                  f"-> we choose K out-of-sample", fontsize=11)
-    lines = [l1, l2, l3]
-    ax1.legend(lines, [l.get_label() for l in lines], loc="center right", fontsize=8.5)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(K, t["holdout_perplexity"], "o-", color="#2a9d8f", lw=2.5)
+    ax.axvline(best, color="grey", ls="--", alpha=.6, label=f"argmin = K {best}")
+    ax.set_xlabel("K  (number of flavor topics)")
+    ax.set_ylabel("held-out perplexity  (lower = better)")
+    ax.set_title("Model selection on the full corpus (held-out perplexity)\n"
+                 "monotone in K here -> the data favors few, coarse topics", fontsize=11)
+    ax.legend(loc="best", fontsize=9)
     fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig); print("wrote", path)
 
 
@@ -108,8 +101,8 @@ def fig_topic_phi(path="figures/fig2_topic_phi_posterior.png", top_n=8):
         ax.set_title(f"Topic {k}  (P={m.topic_prior[k]:.2f})", fontsize=10)
         ax.set_xlabel("φ = P(ingredient | topic)", fontsize=8)
         ax.set_xlim(left=0)
-    fig.suptitle(f"Topic→ingredient posterior φ with {HDI}% credible intervals\n"
-                 f"(fully Bayesian: posterior distributions, not point estimates)",
+    fig.suptitle(f"Topic→ingredient φ (point estimate) with {HDI}% Bootstrap intervals\n"
+                 f"(intervals are small: φ is well determined on the full corpus)",
                  fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.93]); fig.savefig(path, dpi=130)
     plt.close(fig); print("wrote", path)
@@ -138,10 +131,11 @@ def fig_user_posterior(path="figures/fig3_user_topic_posterior.png"):
                             for k in range(K)], fontsize=7)
         ax.set_title(f"P(topic | '{name}')", fontsize=11)
         ax.set_ylim(0, 1.05)
-    axes[0].set_ylabel("posterior topic weight (mean ± 94% CI)")
+    axes[0].set_ylabel("posterior topic weight (mean ± 94% across Bootstrap φ)")
     fig.suptitle("Step 3 — Bayesian posterior over flavor topics for a pantry\n"
-                 "(error bar = 94% credible interval; Italian collapses onto one "
-                 "topic, Baker's stays uncertain across two)", fontsize=11)
+                 "(bars = P(topic|pantry); Italian collapses onto one topic, Baker's "
+                 "spreads across two — error bars small as φ is well determined)",
+                 fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.92]); fig.savefig(path, dpi=130)
     plt.close(fig); print("wrote", path)
 
@@ -173,9 +167,9 @@ def fig_reco_uncertainty(path="figures/fig4_recommendation_uncertainty.png",
         b.set_alpha(0.6)
     ax.set_yticks(range(len(names))); ax.set_yticklabels(names, fontsize=8)
     ax.invert_yaxis()
-    ax.set_xlabel("flavor alignment  exp(−KL(recipe ‖ user))  — posterior over MCMC samples")
-    ax.set_title(f"Top-{top_n} for '{name}': flavor-alignment uncertainty\n"
-                 f"propagated from the φ posterior into the ranking", fontsize=11)
+    ax.set_xlabel("flavor alignment  exp(−KL(recipe ‖ user))  — over Bootstrap φ draws")
+    ax.set_title(f"Top-{top_n} for '{name}': flavor-alignment spread\n"
+                 f"propagated from the φ Bootstrap into the ranking", fontsize=11)
     fig.tight_layout(); fig.savefig(path, dpi=130); plt.close(fig); print("wrote", path)
 
 

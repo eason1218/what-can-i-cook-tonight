@@ -20,72 +20,87 @@ Tonight*: you type in your ingredients, and it returns the Top-5 recipes you can
 ## 2 · 为什么这样选模型 / Why this model
 
 🇨🇳 关键洞察是:一份食谱就像一篇"文档",一种配料就像一个"词",而菜系或风味就是背后的**潜在主题**。
-所以我们用 LDA 主题模型来学习"风味主题"。但我们刻意把它做成**全贝叶斯**的——用 NUTS / MCMC
-保留 phi 和 theta 的**完整后验**,而不是像常见的 LDA 那样只取一个点估计。为什么?因为这个系统
-真正的卖点是"带不确定性的推荐":我们不只说"这道菜配你的口味",还能说出"我们对此有多确定"。
-点估计做不到这件事。
+所以我们用 LDA 来学"风味主题"。我们想要的不只是"这道菜配你口味",还要说出"我们有多确定"——所以
+**不确定性**是核心。但有个现实约束:对 50k 食谱做全贝叶斯 NUTS 后验**根本跑不动**。我们的方案是
+一个**务实的混合模型**:用 sklearn 在**全量语料**上把 φ(主题→配料)学成**点估计**,再用
+**Bootstrap** 近似 φ 的不确定性,并把真正的贝叶斯保真度放在最该放的地方——**用户侧**的主题后验。
 
 🇬🇧 The key insight: a recipe is like a "document", an ingredient like a "word", and a cuisine
-or flavor is a latent **topic**. So we use LDA to learn flavor topics. But we deliberately made
-it **fully Bayesian** — NUTS/MCMC keeping the *full posterior* of phi and theta, instead of the
-usual point-estimate LDA. Why? Because the real value of this system is recommendation *with
-uncertainty*: we don't just say "this dish fits your taste", we can say *how confident* we are.
-A point estimate can't do that.
+or flavor is a latent **topic** — so we use LDA. We want more than "this dish fits your taste";
+we want to say *how confident* we are, so **uncertainty** is central. But there's a hard
+constraint: a fully-Bayesian NUTS posterior over 50k recipes simply **does not run**. Our answer
+is a pragmatic **hybrid**: fit φ (topic→ingredient) as a **point estimate** with sklearn on the
+**full corpus**, approximate φ's uncertainty by **Bootstrap**, and keep the real Bayesian fidelity
+where it matters most — the **user-side** topic posterior.
 
 ---
 
-## 3 · 技术细节一:让 LDA 适配 NUTS / Detail 1: making LDA work with NUTS
+## 3 · 技术细节一:点估计 + Bootstrap 伪后验 / Detail 1: point estimate + Bootstrap
 
-🇨🇳 第一个技术细节。经典 LDA 给每个词采一个**离散**主题 z;但 NUTS 是基于梯度的,走不了离散变量。
-我们的解法是把 z **解析地积分掉**:每个配料就变成一个概率向量为 `theta @ phi` 的 Categorical。
-这和原模型**完全等价**,只是把 z 积掉,只剩下连续的单纯形留给 NUTS——既严谨,又能用梯度采样。
+🇨🇳 第一个技术细节。φ 我们只拟合**一次**得到点估计 φ̂(全量 53k 食谱,约 25 秒)。那不确定性从哪
+来?**Bootstrap**:对食谱有放回重采样,从 φ̂ 暖启动重拟合 50 次,这 50 个 φ̂_b 就当作 φ 的"伪后验
+样本"。下游每个量——用户画像、食谱画像、两者对齐度——都**逐样本**算完再平均,所以"带不确定性的推荐"
+这条主线完整保留。
 
-🇬🇧 First technical detail. Classic LDA samples a *discrete* topic z per word; but NUTS is
-gradient-based and can't traverse discrete variables. Our fix is to **marginalize z
-analytically**: each ingredient becomes a Categorical with probability vector `theta @ phi`.
-This is *exactly the same model* with z integrated out, leaving only continuous simplices for
-NUTS — rigorous, and gradient-friendly.
+🇬🇧 First detail. We fit φ **once** as a point estimate φ̂ (full 53k corpus, ~25 s). Where does
+uncertainty come from? **Bootstrap**: resample recipes with replacement, warm-start from φ̂, refit
+50 times, and treat those 50 φ̂_b as pseudo-samples of φ. Every downstream quantity — the user
+profile, each recipe's profile, their alignment — is computed *per sample* and averaged, so the
+"recommendation with uncertainty" story is fully preserved.
 
 ---
 
-## 4 · 技术细节二:样本外选 K(最关键的方法论)/ Detail 2: choosing K out-of-sample (the key one)
+## 4 · 技术细节二:主题标签对齐 / Detail 2: aligning topic labels
+
+🇨🇳 第二点,一个必须处理的坑。LDA 主题是**可交换**的:每次 Bootstrap 重拟合出来的"主题 0"和上一次
+的"主题 0"毫无关系(label switching)。所以在把这 50 次拟合当成可比的样本之前,我们用**匈牙利算法**
+在余弦相似度上把每次的主题重新排回 φ̂。对齐之后,`phi_samples[:, k, :]` 跨样本才真的是"同一个主题
+k",后面的 KL 对齐才有意义。
+
+🇬🇧 Second — a pitfall we must handle. LDA topics are **exchangeable**: "topic 0" from one
+Bootstrap refit has nothing to do with "topic 0" from another (label switching). So before treating
+the 50 fits as comparable samples, we re-order each fit's topics back onto φ̂ with the **Hungarian
+algorithm** on cosine similarity. After alignment, `phi_samples[:, k, :]` really is "the same topic
+k" across draws, which is what makes the downstream KL meaningful.
+
+---
+
+## 5 · 技术细节三:用留出 perplexity 选 K(诚实结论)/ Detail 3: choosing K (an honest result)
 > (放 fig1 模型选择图 / show fig1, model selection)
 
-🇨🇳 第二点,也是我们最想强调的:怎么选主题数 K。一开始我们用 WAIC,结果它一路把 K 选到网格上限
-——因为 WAIC 是**样本内**准则,主题越多越能拟合训练数据,根本没有内部最优;而且 `p_waic` 大得
-离谱,说明复杂度惩罚已经不可信。于是我们改成**样本外**:留出 15% 的配料 token,在其余 token 上
-拟合,选**留出预测似然**最高的 K。结果非常说明问题:样本内的 WAIC/LOO 想要 K=10,而留出预测在
-K=2 就到顶了。这种背离就是过拟合的直接证据,也正是我们坚持样本外选择的理由。
+🇨🇳 第三点:主题数 K 怎么选。因为能上全量,我们在全语料上用**留出 perplexity**(训练 90%、打分 10%)
+扫 K∈{4,6,8,10,12}。诚实的结果是:perplexity 对 K **单调递增**,选出最小的 K=4——这点语料本身就只
+偏好少而粗的风味主题。我们没有为了好看硬塞更多主题:K 可以一行覆盖,而且因为覆盖率和评分主导分数,
+推荐结果对 K 很稳健。
 
-🇬🇧 Second — and the one we most want to highlight: choosing the number of topics K. We started
-with WAIC, and it pushed K straight to the top of our grid — because WAIC is *in-sample*: more
-topics always fit the training data better, so there's no interior optimum; and a huge `p_waic`
-showed the penalty was no longer trustworthy. So we switched to *out-of-sample*: hold out 15% of
-ingredient tokens, fit on the rest, and pick the K with the best **held-out predictive
-likelihood**. The result is telling: in-sample WAIC/LOO want K=10, while held-out predictive
-peaks at K=2. That divergence is direct evidence of overfitting — and exactly why we select
-out-of-sample.
+🇬🇧 Third: choosing the number of topics K. Because we can use the whole corpus, we sweep
+K∈{4,6,8,10,12} by **held-out perplexity** (train 90%, score 10%). The honest result: perplexity
+is **monotone in K**, picking the smallest, K=4 — this corpus genuinely favors few, coarse flavor
+topics. We don't pad it for looks: K is a one-line override, and because coverage and rating
+dominate the score, the recommendations are robust to K.
 
 ---
 
-## 5 · 技术细节三:不确定性传播 / Detail 3: propagating uncertainty
-> (放 fig2 主题后验 + fig3 用户后验 / show fig2 topic posterior + fig3 user posterior)
+## 6 · 技术细节四:不确定性传播 / Detail 4: propagating uncertainty
+> (放 fig2 主题 φ + fig3 用户后验 / show fig2 topic φ + fig3 user posterior)
 
-🇨🇳 第三点:不确定性怎么一路传到推荐。因为我们保留的是后验**样本**,所以用户的风味画像、每道菜
-的画像、以及两者的对齐度,都是**逐样本**算完再平均的。于是每条推荐都自带一个
-`posterior_uncertainty`。一个很漂亮的现象:意式菜篮的后验会**确定地**坍缩到单一主题,而烘焙菜篮
-会在两个主题之间分裂、带很宽的可信区间——同一套机制,确定性却不同。
+🇨🇳 第四点,也是贝叶斯的真正落点。注意一个细节:在 53k 食谱上,φ 其实被**确定得很好**——Bootstrap
+的离散度很小(每元素标准差约 5e-4)。所以我们诚实地把它叫"重采样**稳定性**",而不是后验不确定性。
+真正不确定、真正贝叶斯的地方是**用户侧**:你只给几个配料,我们对**每个 φ 样本**用贝叶斯定理算
+P(主题|配料)。漂亮的现象是:意式菜篮的后验**确定地**坍缩到单一主题,而烘焙菜篮在两个主题之间分裂
+——同一套机制,确定性不同。
 
-🇬🇧 Third: how uncertainty reaches the recommendation. Because we keep posterior *samples*, the
-user's flavor profile, each recipe's profile, and their alignment are all computed *per sample*
-and then averaged. So every recommendation carries a `posterior_uncertainty`. A nice
-illustration: the Italian pantry's posterior collapses *deterministically* onto one topic, while
-the baker's pantry splits across two with wide credible intervals — same machinery, different
-certainty.
+🇬🇧 Fourth — where the Bayes really lands. Note a detail: on 53k recipes, φ is actually **very
+well determined** — the Bootstrap spread is tiny (per-element std ≈ 5e-4). So we honestly call it
+resampling **stability**, not posterior uncertainty. The genuinely uncertain, genuinely Bayesian
+part is the **user side**: from your handful of ingredients we apply Bayes' theorem *per φ-sample*
+to get P(topic | ingredients). The nice illustration: the Italian pantry's posterior collapses
+*deterministically* onto one topic, while the baker's pantry splits across two — same machinery,
+different certainty.
 
 ---
 
-## 6 · 技术细节四:综合打分 / Detail 4: the composite score
+## 7 · 技术细节五:综合打分 / Detail 5: the composite score
 > (放 fig4 推荐不确定性图 / show fig4, recommendation uncertainty)
 
 🇨🇳 最后是排序分数。它是四项相乘:**coverage 的平方**(做不出来的菜没用)× **绝对重合度奖励**
@@ -101,32 +116,41 @@ targets a concrete failure mode — the score is designed, not guessed.
 
 ---
 
-## 7 · 收尾 / Takeaway
+## 8 · 收尾 / Takeaway
 
-🇨🇳 一句话总结:我们把一个日常问题,做成了一个**方法上诚实**的贝叶斯系统——主题用 NUTS 严格推断,
-K 用样本外标准选,不确定性从后验一路带到了你看到的每一条推荐。谢谢。
+🇨🇳 一句话总结:我们把一个日常问题,做成了一个**方法上诚实**的系统——φ 用点估计换来全语料的规模与
+速度,不确定性用 Bootstrap 近似,而真正的贝叶斯保真度留在最该有的地方:从几个配料推断的用户后验,
+并一路传到你看到的每一条推荐。谢谢。
 
-🇬🇧 In one line: we turned an everyday question into a *methodologically honest* Bayesian system —
-topics inferred rigorously with NUTS, K chosen out-of-sample, and uncertainty carried from the
-posterior all the way to every recommendation you see. Thank you.
+🇬🇧 In one line: we turned an everyday question into a *methodologically honest* system — φ as a
+point estimate to buy full-corpus scale and speed, uncertainty approximated by Bootstrap, and the
+real Bayesian fidelity kept where it belongs: the user posterior inferred from a few ingredients,
+carried all the way to every recommendation you see. Thank you.
 
 ---
 
 ## 附:可能的提问 / Appendix: likely Q&A
 
-🇨🇳 **问:为什么不用更快的变分 LDA(如 gensim)?** 答:那只给点估计,拿不到我们要传播的后验不确定性;
-我们的核心贡献正是不确定性,所以值得用 MCMC。
-🇬🇧 **Q: Why not faster variational LDA (e.g. gensim)?** It only gives a point estimate, not the
-posterior uncertainty we propagate — and uncertainty is our core contribution, so MCMC is worth it.
+🇨🇳 **问:为什么不用全贝叶斯 NUTS 学 φ?** 答:它撑不到 50k 食谱(几百篇就要几十分钟),而我们想要
+全语料。点估计 + Bootstrap 让我们既上全量又保住不确定性传播这条主线。
+🇬🇧 **Q: Why not learn φ with fully-Bayesian NUTS?** It doesn't scale to 50k recipes (a few hundred
+already take tens of minutes), and we want the whole corpus. Point estimate + Bootstrap gives us
+both full scale and the uncertainty-propagation story.
 
-🇨🇳 **问:K=2 是不是太少?** 答:留出准则在这点语料上诚实地只支持 ~2 个主题;想要更细的风味标签,
-就加大 `n_train`/`vocab_size` 让样本外准则能支撑更大的 K——这是数据量的真实信号,不是 bug。
-🇬🇧 **Q: Isn't K=2 too few?** On this corpus the held-out criterion honestly supports only ~2
-topics; for finer flavor tags, grow `n_train`/`vocab_size` so out-of-sample evidence can justify a
-larger K — it's a real signal of data size, not a bug.
+🇨🇳 **问:那这还算"贝叶斯"吗?** 答:算,而且贝叶斯用在了刀刃上——用户侧的主题后验是对**每个 φ 样本**
+做的真正贝叶斯更新。φ 在大语料上确定性很高,所以它的 Bootstrap 离散度小是**设计内**的,我们也如实
+叫它"稳定性"。
+🇬🇧 **Q: Is this still "Bayesian"?** Yes — and the Bayes is where it counts: the user-side topic
+posterior is a genuine Bayesian update applied *per φ-sample*. φ is highly determined on a large
+corpus, so its small Bootstrap spread is **by design**, and we honestly call it "stability".
 
-🇨🇳 **问:ESS 看起来偏低?** 答:跨链 ESS 被 label switching 压低了;我们报告的是保留链的**链内** ESS,
-因为主题标签只在单链内一致,而 WAIC/LOO/留出只依赖标签不变的 `theta@phi`,可以汇总所有链。
-🇬🇧 **Q: ESS looks low?** Cross-chain ESS is deflated by label switching; we report the *within-chain*
-ESS of the kept chain, since topic labels are only coherent within a chain — while WAIC/LOO/held-out
-depend only on the label-invariant `theta @ phi` and can pool all chains.
+🇨🇳 **问:K=4 是不是太少?** 答:留出 perplexity 在这点语料上诚实地只支持很少的主题;想要更细的风味
+标签,加大 `K` 或 `vocab_top_n` 即可——这是数据量的真实信号,不是 bug。
+🇬🇧 **Q: Isn't K=4 too few?** Held-out perplexity honestly supports only a few topics on this
+corpus; for finer flavor tags, raise `K` or `vocab_top_n` — it's a real signal of data size, not a bug.
+
+🇨🇳 **问:Bootstrap 怎么保证主题可比?** 答:每次重拟合后用匈牙利算法把主题对齐回点估计 φ̂,所以跨
+样本的"主题 k"是一致的,KL 和不确定性才有意义。
+🇬🇧 **Q: How do you keep Bootstrap topics comparable?** After each refit we align topics back to the
+point estimate φ̂ with the Hungarian algorithm, so "topic k" is consistent across samples — which is
+what makes the KL and the uncertainty meaningful.

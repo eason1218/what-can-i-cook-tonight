@@ -2,11 +2,19 @@
 
 # What Can I Cook Tonight? — Bayesian LDA Recipe Recommender
 
-A **fully Bayesian** Latent Dirichlet Allocation (LDA) recommender built on **PyMC**.
+A Bayesian Latent Dirichlet Allocation (LDA) recommender over latent "flavor topics".
 Given the ingredients you have on hand, it returns the Top-5 recipes you can make,
 ranked by a composite score that fuses *coverage*, *latent-flavor alignment*, and a
-*Bayesian-smoothed rating* — with uncertainty propagated from the MCMC posterior all
-the way to the final ranking.
+*Bayesian-smoothed rating* — with uncertainty propagated all the way to the ranking.
+
+**The model.** A fully-Bayesian NUTS fit of `φ` (topic→ingredient) does not scale past a few
+hundred recipes, so `φ` is fit as a **point estimate** with `sklearn`'s
+`LatentDirichletAllocation` on the **full 53k-recipe corpus**, and `φ`'s uncertainty is
+approximated by **Bootstrap** resampling (refit on resampled recipes, kept as pseudo-samples).
+Every downstream quantity is computed *per `φ`-sample and then averaged*, so uncertainty flows to
+the final score; the genuinely-Bayesian step is the **user's flavor posterior** (Step 3), inferred
+from a handful of ingredients via Bayes' theorem. Fast (~25 s for the full corpus) and Bayesian
+where it matters.
 
 ## Pipeline at a glance
 
@@ -22,19 +30,21 @@ model/
 ├── src/
 │   ├── recipe_recommender.py    # model + the 5 functions: train_lda, filter_candidates,
 │   │                            #   infer_user_posterior, score_recipes, recommend
+│   ├── topic_alignment.py       # Hungarian topic-label alignment for the Bootstrap refits
 │   ├── prepare_data.py          # download Food.com  ->  data/recipes_clean.csv
 │   ├── run_demo.py              # end-to-end demo    ->  results.json (+ trains the model)
-│   ├── visualize.py             # Bayesian figures   ->  figures/
+│   ├── visualize.py             # figures            ->  figures/
 │   └── make_flowchart.py        # pipeline diagram   ->  figures/pipeline_flowchart.png
 ├── notebooks/
 │   ├── model_pipeline.ipynb     # end-to-end construction walkthrough (executed)
 │   ├── usage_example.ipynb      # a single recommendation use case (executed)
 │   └── Data.ipynb               # original data-engineering notebook (spaCy)
+├── tests/                       # test_alignment.py  (pytest)
 ├── figures/                     # fig1–fig4 + pipeline_flowchart.png
 ├── docs/                        # presentation_script.md · flowchart.md
 ├── data/                        # recipes_clean.csv  (generated; gitignored)
 ├── models/                      # lda_model.pkl      (trained;   gitignored)
-├── model_selection.json         # K-sweep data behind fig1
+├── model_selection.json         # held-out perplexity per K (behind fig1)
 └── results.json                 # last demo run
 ```
 
@@ -44,9 +54,9 @@ The five required functions live in `src/recipe_recommender.py`: `train_lda`,
 ## Quick start
 
 ```bash
-pip install pymc arviz nutpie kagglehub inflect numpy pandas scipy
+pip install scikit-learn joblib kagglehub inflect numpy pandas scipy matplotlib seaborn
 python src/prepare_data.py      # -> data/recipes_clean.csv
-python src/run_demo.py          # train + recommend
+python src/run_demo.py          # train (full corpus, ~25–60 s) + recommend
 # or, as a library:
 python src/recipe_recommender.py --ingredients chicken garlic onion tomato rice salt
 ```
@@ -65,37 +75,37 @@ rr.recommend(["chicken", "garlic", "onion", "tomato", "rice", "salt"], df)
 
 ## The five steps
 
-### Step 1 — `train_lda()` : Bayesian LDA with NUTS, K by held-out predictive likelihood
-Generative model:
+### Step 1 — `train_lda()` : sklearn point estimate of φ + Bootstrap pseudo-posterior
 
-```
-phi_k   ~ Dirichlet(beta=0.01)       # sparse ingredient distribution per topic
-theta_m ~ Dirichlet(alpha=0.1)       # sparse topic mix per recipe
-w_mn    ~ Categorical(theta_m @ phi)  # observed ingredient
-```
+`train_lda(df, ...) -> LDAModel`. The model keeps `phi_samples` (the Bootstrap pseudo-posterior),
+which is what every downstream quantity is averaged over.
 
-**Why `theta_m @ phi` instead of explicit `z_mn`?** The classic story samples a
-discrete topic `z_mn ~ Categorical(theta_m)` then `w_mn ~ Categorical(phi_z)`. NUTS
-is gradient-based and cannot traverse discrete latents, so we **marginalize z
-analytically** — `p(w | theta, phi) = Σ_k theta_k phi_k = (theta @ phi)`. This is the
-*same* model with z integrated out, leaving only the continuous simplex variables for
-NUTS. We keep the **full posterior** of `phi` and `theta` (samples, not point
-estimates).
+1. **Point estimate.** Fit one `sklearn.decomposition.LatentDirichletAllocation` on the **full
+   corpus** → `φ̂` (`components_`, row-normalized). Doc-term matrix vocabulary = the top
+   `vocab_top_n` ingredients by document frequency.
+2. **Bootstrap pseudo-posterior.** Refit `B=50` times on resampled recipes (m-out-of-n,
+   `m≈10k`), each **warm-started** from `φ̂` and run a few online passes; the `B` aligned fits
+   become `phi_samples`, so the headline "uncertainty propagation" flows through Steps 3–5.
+3. **Label alignment.** Each refit's topics come out permuted, so every `φ̂_b` is matched back
+   onto `φ̂` with the **Hungarian algorithm on cosine similarity** (`topic_alignment.align_phi`).
+   After alignment `phi_samples[:, k, :]` is a coherent "topic k" across draws, so the downstream
+   KL is meaningful.
+4. **K selection by held-out perplexity** over `K ∈ {4,6,8,10,12}` (train 90% / score 10%).
+   *Honest result:* perplexity is **monotonic in `K`** on this corpus, so it picks the smallest
+   (`K=4`) — the data genuinely favors few, coarse topics. `K` stays overridable
+   (`train_lda(df, K=6)`) for richer `flavor_tags`; recommendations are robust to `K` because
+   coverage and rating dominate the score.
 
-**K selection by held-out predictive likelihood.** WAIC and PSIS-LOO are *in-sample*
-criteria, and for this flexible marginalized LDA they keep improving as `K` grows (more
-topics simply fit the training tokens better) — there is no clean interior optimum, and
-a large `p_waic`/`p_loo` or many Pareto-`k` above arviz's `good_k` just signals the
-complexity penalty has stopped being trustworthy. So we select `K` **out-of-sample**:
-15% of ingredient tokens are held out, every `K` is fit on the rest, and the winner
-maximizes the held-out predictive density `Σ_n log mean_s p(w_n | θ, φ)`. Topics that
-merely memorize the training tokens don't help predict held-out ones, so this criterion
-peaks at a finite `K`. WAIC and PSIS-LOO (with the Pareto-`k` reliability check) are
-still computed on the training tokens and **reported as diagnostics**. The winning `K`
-is then **refit on the full corpus**. All three criteria depend only on the
-label-invariant likelihood `theta @ phi`, so they pool all chains safely. *(arviz 1.x
-dropped the standalone `waic()`; WAIC is computed from the posterior samples directly,
-PSIS-LOO via `az.loo`.)*
+> **Honest caveat — `φ` is a point estimate.** The Bootstrap spread is **bootstrap stability**,
+> not a Bayesian posterior: on a large corpus `φ` is very well determined, so it is small *by
+> design* (mean per-element `φ` std ≈ `5e-4`). We therefore report it as *stability*, not
+> *posterior uncertainty*, and `posterior_uncertainty` in the output is ≈ 0. This is a defensible
+> approximation **because** `φ` carries little uncertainty at 53k recipes; the genuinely uncertain
+> quantity is the *user's* topic posterior (Step 3), inferred from a handful of ingredients, and
+> **that stays fully Bayesian**.
+
+The hyper-priors enter as sklearn's Dirichlet priors: `alpha = doc_topic_prior = 0.1` (sparse
+topic mix per recipe), `beta = topic_word_prior = 0.01` (sparse ingredient set per topic).
 
 ### Step 2 — `filter_candidates()`
 `coverage = |user ∩ recipe| / |recipe|`. Keep `coverage ≥ 0.7`; if fewer than 20
@@ -103,8 +113,7 @@ recipes survive, relax to `0.5`. Both sides are run through the same ingredient
 canonicalizer so the set intersection is meaningful.
 
 ### Step 3 — `infer_user_posterior()` : posterior over flavor topics
-Treat the user's ingredients as evidence and apply Bayes' theorem **per posterior
-sample of phi**:
+Treat the user's ingredients as evidence and apply Bayes' theorem **per `φ`-sample**:
 
 ```
 P(topic=k | ingredients) ∝ P(ingredients | topic=k) · P(topic=k)
@@ -112,11 +121,12 @@ P(ingredients | topic=k)  = Π_i phi[k, i]
 P(topic=k)                = empirical marginal topic frequency (mean recipe mix)
 ```
 
-We evaluate this for every MCMC sample and keep the per-sample posteriors, so the
-"flavor profile" carries the model's uncertainty rather than collapsing to a point
-estimate. The *same* function profiles each recipe in Step 4.
+We evaluate this for every Bootstrap sample of `φ` and keep the per-sample posteriors, so the
+"flavor profile" carries uncertainty rather than collapsing to a point estimate. This is the
+genuinely Bayesian step: the posterior over topics is peaked for a focused pantry and spread for
+an ambiguous one. The *same* function profiles each recipe in Step 4.
 
-### Step 4 — `score_recipes()` : composite Bayesian score
+### Step 4 — `score_recipes()` : composite score
 ```
 score = coverage^2 · overlap_bonus · flavor_alignment^1 · rating_prior^1
 ```
@@ -125,9 +135,9 @@ score = coverage^2 · overlap_bonus · flavor_alignment^1 · rating_prior^1
   a 2–3 ingredient recipe trivially scores 1.0; this saturating bonus in the *absolute*
   number of matched ingredients demotes those trivial matches and rewards substantively
   bigger ones (a real 6/7 over a token 3/3).
-- **flavor_alignment** = `exp(−KL(recipe_topics ‖ user_topics))`, computed per MCMC
-  sample (recipe & user posteriors paired by draw) then averaged. Its per-sample
-  **std** is reported as `posterior_uncertainty`.
+- **flavor_alignment** = `exp(−KL(recipe_topics ‖ user_topics))`, computed per Bootstrap
+  sample (recipe & user posteriors paired by draw) then averaged. Its per-sample **std** is
+  reported as `posterior_uncertainty` (bootstrap *stability*; ≈ 0 because `φ` is well determined).
 - **rating_prior** — Beta-Binomial / shrinkage smoothing
   `(avg·n + μ_global·κ) / (n + κ)`, `κ=5`; recipes with few ratings shrink toward the
   global mean.
@@ -140,9 +150,9 @@ Returns the Top-N as dicts:
   "score": float,
   "coverage": "5/6 ingredients",
   "missing_ingredients": [...],
-  "flavor_tags": [...],            # top-2 topic labels from the posterior
+  "flavor_tags": [...],            # top-2 topic labels
   "predicted_rating": float,
-  "posterior_uncertainty": float, # std of flavor alignment across MCMC samples
+  "posterior_uncertainty": float, # std of flavor alignment across Bootstrap draws
 }
 ```
 
@@ -165,62 +175,53 @@ Matching is on the same normalized ingredient tokens as coverage, so it stays co
 
 ## Visualizations (`python visualize.py`)
 
-Built from the cached posterior (`models/lda_model.pkl`) — no retraining, runs in seconds.
+Built from the cached model (`models/lda_model.pkl`) — no retraining, runs in seconds.
 
-**Model selection — why K is chosen out-of-sample**
+**Model selection — held-out perplexity across K**
 
-![Model selection: held-out predictive vs in-sample WAIC/LOO across K](figures/fig1_model_selection.png)
+![Held-out perplexity across K](figures/fig1_model_selection.png)
 
-*Held-out predictive lppd (green) peaks at a small K, while in-sample WAIC/LOO (right axis)
-keep "improving" with K — the classic overfitting signature. So K is chosen out-of-sample.*
+*Held-out perplexity (lower = better) is monotone in K on this corpus, so the data favors few,
+coarse topics; K is overridable for richer topics.*
 
-**Topic→ingredient posterior φ (94% credible intervals)**
+**Topic→ingredient φ (point estimate, 94% Bootstrap intervals)**
 
-![Per-topic top ingredients with 94% credible intervals on phi](figures/fig2_topic_phi_posterior.png)
+![Per-topic top ingredients with 94% Bootstrap intervals on phi](figures/fig2_topic_phi_posterior.png)
 
-*The "fully Bayesian" view: we keep posterior distributions over φ, not point estimates.*
+*The Bootstrap "stability" band is small — `φ` is well determined on the full corpus.*
 
 **Step 3 — the user's flavor posterior**
 
-![P(topic | pantry) with 94% credible intervals](figures/fig3_user_topic_posterior.png)
+![P(topic | pantry)](figures/fig3_user_topic_posterior.png)
 
-*`P(topic | pantry)` (mean ± 94% CI): the Italian pantry collapses onto one topic (certain),
-the baker's pantry splits across two (genuinely uncertain) — same machinery, different certainty.*
+*`P(topic | pantry)`: the Italian pantry collapses onto one topic (certain), the baker's pantry
+spreads across two (genuinely uncertain) — this is the Bayesian step.*
 
 **Uncertainty propagated into the ranking**
 
-![Top-5 flavor-alignment posterior](figures/fig4_recommendation_uncertainty.png)
+![Top-5 flavor-alignment spread](figures/fig4_recommendation_uncertainty.png)
 
-*Per-MCMC-sample flavor alignment for the Top-5 — the φ posterior's uncertainty reaches the
-final score.*
+*Per-Bootstrap-draw flavor alignment for the Top-5 — the `φ` Bootstrap reaches the final score.*
 
 ## Design decisions & honest caveats
 
-- **Scale.** Fully Bayesian NUTS does not scale to ~50k recipes × thousands of
-  ingredients. `train_lda` fits `phi` on a manageable **subsample of recipes** and a
-  **top-N ingredient vocabulary**; per-recipe and per-user topic profiles for the
-  *whole* catalogue are then obtained from the `phi` posterior via the Step-3 Bayes
-  update (fast, and consistent with the user computation). Increase `n_train`,
-  `vocab_size`, `draws` for higher fidelity at the cost of runtime.
-- **Number of topics is corpus-bound.** Because `K` is chosen *out-of-sample*, it can
-  only be as large as the training corpus actually supports — a small `n_train` will
-  honestly select very few topics (coarse `flavor_tags`). For richer topics, raise
-  `n_train`/`vocab_size` so the held-out criterion can justify a larger `K`; this
-  trades runtime (NUTS scales with the `theta` dimension `M×K`).
-- **Label switching.** Topics are exchangeable, so topic labels are not comparable
-  across chains. The likelihood `theta @ phi` *is* label-invariant, so WAIC, PSIS-LOO
-  and the held-out predictive pool all chains; everything topic-wise (the kept
-  posterior, the topic KLs) **and the reported `ESS`** use a **single chain**, within
-  which labels stay coherent. Cross-chain ESS/r-hat of `phi` would be deflated purely by
-  label switching, so reporting it would understate convergence — hence per-chain.
-- **Sampler.** Uses `nutpie` (numba backend) because no C/C++ compiler is available
-  for PyTensor's default backend. First compile per model takes ~1–2 min.
-- **Backend note.** `recommend()` lazily trains and caches the model on first call
-  (keyed on the DataFrame); pass `retrain=True` or different `train_kwargs` to refit.
-- **Performance.** Ingredient normalization is the hot path, so `normalize_token` is
-  `lru_cache`d (≈474k calls collapse to ≈7k distinct strings) and the catalogue's
-  normalized lists are cached per DataFrame. A `recommend()` call costs ~2 s cold and
-  ~0.05 s warm (was ~38 s every call). Passing a single `k_values=(K,)` skips the
-  held-out diagnostic fit and trains with one NUTS fit. The NUTS fit itself is the only
-  inherent cost; it scales super-linearly in the number of training *documents*
-  (`n_train`), so keep `n_train` modest (~400) and widen `vocab_size` (cheap) instead.
+- **`φ` is a point estimate (the core trade).** A fully-Bayesian NUTS fit does not scale to ~50k
+  recipes × thousands of ingredients, so `φ` is fit once with sklearn on the full corpus and its
+  uncertainty is approximated by **Bootstrap**. The cost: the Bootstrap spread is *stability*, not
+  a true posterior, and is small because `φ` is well determined at scale
+  (`posterior_uncertainty` ≈ 0). The justification: the uncertainty that actually matters is the
+  *user's* topic posterior (Step 3, a few ingredients), which **stays fully Bayesian**.
+- **Bootstrap label alignment.** Each Bootstrap refit's topics are arbitrarily ordered;
+  `topic_alignment.align_phi` re-permutes every `φ̂_b` onto `φ̂` via the Hungarian algorithm on
+  cosine similarity, so `phi_samples[:, k, :]` is a coherent topic `k` across draws.
+- **K is corpus-bound.** Held-out perplexity is monotone in K here (it favors the smallest
+  candidate), so coarse `flavor_tags` are the honest default; raise `K` (or `vocab_top_n`) for
+  richer topics. Recommendations are robust to `K` because coverage and rating dominate.
+- **Backend note.** `recommend()` lazily trains and caches the model on first call (keyed on the
+  DataFrame); pass `retrain=True` or different `train_kwargs` to refit. `sklearn` / `joblib` are
+  imported lazily, so importing the module stays light and Bootstrap workers spawn cheaply.
+- **Performance.** Ingredient normalization is the hot path, so `normalize_token` is `lru_cache`d
+  (≈474k calls collapse to ≈7k distinct strings) and the catalogue's normalized lists are cached
+  per DataFrame. A warm `recommend()` call costs ~0.05 s. Training the full corpus is ~25 s with a
+  fixed `K` and ~60 s with the K-selection sweep; the Bootstrap refits run in parallel
+  (`n_jobs`), each on an m-out-of-n resample to keep them cheap.

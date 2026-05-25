@@ -18,14 +18,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pandas as pd
 
-from recipe_recommender import _coerce_ingredients, normalize_token
+# reuse the recommender's ingredient canonicalizer (Stage 3 lives in ../model/src)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_HERE, "..", "model", "src"))
+from recipe_recommender import _coerce_ingredients, normalize_token   # noqa: E402
 
 MIN_RATINGS = 5
 MIN_INGR, MAX_INGR = 2, 35
-OUT_PATH = "data/recipes_clean.csv"
+OUT_PATH = os.path.join(_HERE, "recipes_clean.csv")    # write next to this script (data/)
 
 
 def _download() -> str:
