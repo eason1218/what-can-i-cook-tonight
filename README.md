@@ -1,5 +1,7 @@
 # What Can I Cook Tonight? — Image → Ingredients → Recipes
 
+**Authors:** Qixin Cui · Kevin Fan · Yizhuo Li · Elaine Wang · Zhetao Zhang (University of Chicago)
+
 An end-to-end pipeline: **take a photo of your ingredients, get the Top-5 recipes you can make.**
 Three stages, one entry point.
 
