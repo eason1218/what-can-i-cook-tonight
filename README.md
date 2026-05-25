@@ -38,7 +38,7 @@ Bayesian Methods Final Project — by **Qixin Cui**, **Kevin Fan**, **Yizhuo Li*
 
 ## Features
 
-- 📷 **Photo → ingredients** — a Fine-Tuned YOLOv5 detector (95 ingredient classes) reads a fridge or counter photo.
+- 📷 **Photo → ingredients** — a Hugging Face Fine-Tuned YOLOv5 detector (95 ingredient classes) reads a fridge or counter photo.
 - 🧠 **Recommendations with confidence** — a Bayesian flavor model ranks recipes *and* reports how sure it is.
 - 🧾 **The whole recipe at a glance** — every suggestion lists all the ingredients it needs and flags the ones you're missing.
 - 🥗 **Real-life filters** — vegetarian / vegan, "must use this", and a diversity dial so you don't get five near-identical dishes.
