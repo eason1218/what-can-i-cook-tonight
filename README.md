@@ -185,17 +185,6 @@ confidently wrong is worse than one that admits when it's guessing.
 - **The doubt reaches the final list.** Uncertainty isn't computed and thrown away — it travels all
   the way into the ranking, so every recommendation can report how confident it is.
 
-<table>
-<tr>
-<td width="50%"><img src="model/figures/fig3_user_topic_posterior.png" width="100%"></td>
-<td width="50%"><img src="model/figures/fig1_model_selection.png" width="100%"></td>
-</tr>
-<tr>
-<td align="center"><sub><b>Why Bayesian, in one picture.</b> What the model believes about your pantry's flavor: a clearly-Italian pantry lands on one theme (confident); a baker's pantry splits across two (uncertain).</sub></td>
-<td align="center"><sub><b>Why a few broad themes.</b> The data favors a small number of coarse flavor themes, so the model stays readable on purpose rather than chasing many fine-grained ones.</sub></td>
-</tr>
-</table>
-
 ---
 
 # 🚀 Getting started
