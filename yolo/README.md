@@ -19,17 +19,19 @@ photo ──▶ detect.py (YOLOv5) ──▶ [(label, conf), …] ──▶ yolo
 | `yolo_mapping.py` | **Query time:** apply that map, dropping unmapped labels and duplicates |
 | `yolo_vocab_mapping.json` | the committed map — 93 of 95 classes → 87 distinct ingredients |
 | `mapping_vocab.ipynb` | the notebook the label → ingredient mapping was explored in |
-| `weights/best.pt` | trained detector weights (gitignored; you provide) |
+| `weights/best.pt` | the detector checkpoint from [HuggingFace `HYUNAHKO/Ingredients_object_detection`](https://huggingface.co/HYUNAHKO/Ingredients_object_detection) (gitignored; you download) |
 | `yolov5/` | upstream [Ultralytics](https://github.com/ultralytics/yolov5) backend (cloned; gitignored) |
 
 ## The detector
 
-The weights `weights/best.pt` are a **custom YOLOv5** model with **95 ingredient classes**. The class
-vocabulary — `Wakame`, `Napa_cabbage`, `Cabbage_kimchi`, `Radish_kimchi`, `Enoki_mushrooms`,
+The weights `weights/best.pt` are a **fine-tuned YOLOv5** model with **95 ingredient classes**, taken
+from the Hugging Face checkpoint
+[`HYUNAHKO/Ingredients_object_detection`](https://huggingface.co/HYUNAHKO/Ingredients_object_detection).
+The class vocabulary — `Wakame`, `Napa_cabbage`, `Cabbage_kimchi`, `Radish_kimchi`, `Enoki_mushrooms`,
 `Somen`, `Udon`, `Ramen`, `Soybean_sprouts`, `Seasoned_seaweed`, alongside Western staples like
-`Tomato`, `Egg`, `Chicken`, `Cheese` — is an **Asian / Korean fridge-staples** set. The model was
-trained externally (Ultralytics `train.py`, on Colab); this repo ships only the weights + inference,
-and clones the upstream `yolov5` repo as the backend.
+`Tomato`, `Egg`, `Chicken`, `Cheese` — is an **Asian / Korean fridge-staples** set. We don't train it
+ourselves: this repo ships only inference, expects the checkpoint at `weights/best.pt`, and clones the
+upstream `yolov5` repo as the backend.
 
 ### Inference (`detect.py`)
 
@@ -47,7 +49,7 @@ and clones the upstream `yolov5` repo as the backend.
 
 ### Two portability gotchas
 
-The checkpoint was saved on Linux (Colab), which bites on Windows — both handled in `detect.py`:
+The checkpoint was saved on Linux, which bites on Windows — both handled in `detect.py`:
 
 - **`PosixPath` unpickling.** A Linux-saved checkpoint pickles a `PosixPath`, which cannot
   instantiate on Windows. We temporarily alias `pathlib.PosixPath = pathlib.WindowsPath` around the
@@ -104,7 +106,7 @@ unmapped labels and de-duplicating** while preserving order. It accepts either b
 ```bash
 # one-time setup
 git clone https://github.com/ultralytics/yolov5 yolo/yolov5
-# place trained weights at yolo/weights/best.pt
+# download best.pt from HuggingFace (HYUNAHKO/Ingredients_object_detection) -> yolo/weights/best.pt
 
 # detect on an image (prints "conf  label")
 python yolo/detect.py samples/fridge.jpg --conf 0.25

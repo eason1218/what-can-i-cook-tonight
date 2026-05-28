@@ -132,9 +132,9 @@ Output schema: `recipe_id, recipe_name, ingredients (JSON list), avg_rating, n_r
 
 ## Stage 2 · Detection
 
-A custom **YOLOv5** detector (95 ingredient classes; the class vocabulary — *wakame, napa cabbage,
-kimchi, enoki / oyster / shiitake mushrooms, somen / udon / ramen* — is an Asian fridge-staples set)
-reads the photo. At inference ([`yolo/detect.py`](yolo/detect.py)) we run non-max suppression, keep
+A **YOLOv5** detector fine-tuned on ingredients ([HuggingFace `HYUNAHKO/Ingredients_object_detection`](https://huggingface.co/HYUNAHKO/Ingredients_object_detection);
+95 classes whose vocabulary — *wakame, napa cabbage, kimchi, enoki / oyster / shiitake mushrooms,
+somen / udon / ramen* — is an Asian fridge-staples set) reads the photo. At inference ([`yolo/detect.py`](yolo/detect.py)) we run non-max suppression, keep
 the **highest-confidence box per class** above a confidence threshold (default `0.25`), and return
 `(label, confidence)` pairs.
 
