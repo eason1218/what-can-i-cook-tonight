@@ -7,21 +7,27 @@
 ![Recipes](https://img.shields.io/badge/corpus-53%2C573%20recipes-success)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-Snap a photo of your fridge and get **ranked recipes you can actually make tonight** — powered by a Bayesian flavor model that knows when it's not sure.
+Snap a photo of what's in your fridge and get the **recipes you can actually make tonight** — ranked by a Bayesian flavor model that also tells you how confident it is.
 
-Bayesian Methods Final Project — **Qixin Cui**, **Kevin Fan**, **Yizhuo Li**, **Elaine Wang**, **Zhetao Zhang** (University of Chicago)
+Bayesian Methods Final Project — by **Qixin Cui**, **Kevin Fan**, **Yizhuo Li**, **Elaine Wang**, and **Zhetao Zhang** (University of Chicago).
 
 ![Demo](assets/demo.png)
 
+> *Upload a fridge photo → the detector spots the ingredients → the recommender returns ranked recipes, each with its full ingredient list and what you're still missing.*
+
 ---
 
-## The problem
+# 📌 Overview
 
-Most recipe apps assume you already know what you have. We flip that: **snap a photo → detect ingredients → recommend recipes**, ranked by how much of each dish you can actually make right now.
+## Features
 
-The hard part is uncertainty — detection is imperfect, your pantry is incomplete, and ratings are noisy. That's exactly what Bayesian methods are built for.
+- 📷 **Photo → ingredients** — a fine-tuned YOLOv5 detector (95 ingredient classes) reads a fridge or counter photo.
+- 🧠 **Recommendations with confidence** — a Bayesian flavor model ranks recipes *and* reports how sure it is.
+- 🧾 **The whole recipe at a glance** — every suggestion lists all ingredients and flags the ones you're missing.
+- 🥗 **Real-life filters** — vegetarian / vegan, "must use this", and a diversity dial so you don't get five near-identical dishes.
+- 📚 **53,573 real recipes** — cleaned from the public Food.com dataset.
 
-## Pipeline
+## Architecture
 
 Three stages, one entry point: a photo goes in, ranked recipes come out.
 
@@ -41,29 +47,35 @@ flowchart LR
     D -. corpus .-> M
 ```
 
-| Stage | What it does | Tech |
-|-------|--------------|------|
-| 1 · Data | Download & clean 53,573 Food.com recipes | pandas · kagglehub |
-| 2 · Detect | Spot ingredients in a photo, map to recipe vocabulary | YOLOv5 · PyTorch · OpenCV · RapidFuzz |
-| 3 · Recommend | Rank recipes with a Bayesian LDA flavor model | scikit-learn · NumPy · SciPy |
-| App | Web UI and CLI over the same engine | Gradio |
+| Stage | Folder | What it does | Tech |
+|-------|--------|--------------|------|
+| 1 · Data | `data/` | Download and clean the Food.com corpus → `recipes_clean.csv` | pandas · kagglehub |
+| 2 · Detect | `yolo/` | Spot ingredients in a photo, map labels to the recipe vocabulary | YOLOv5 · PyTorch · OpenCV · RapidFuzz |
+| 3 · Recommend | `model/` | Rank recipes with a Bayesian flavor model | scikit-learn · NumPy · SciPy |
+| — | `app.py` · `run_pipeline.py` | Web UI and CLI over the same engine | Gradio |
 
-## What you get
+---
 
-- 📷 **Photo → ingredients** — YOLOv5 detector (95 ingredient classes) reads your fridge photo
-- 🧠 **Ranked recipes with confidence** — Bayesian LDA ranks recipes *and* reports how sure it is
-- 🧾 **Full ingredient breakdown** — see everything a recipe needs and what you're still missing
-- 🥗 **Practical filters** — vegetarian / vegan, must-use ingredient, diversity dial
-- 📚 **53,573 real recipes** from the public Food.com dataset
+# 🍳 How it works
 
-## How recipes are ranked
+## The idea
 
-Each recipe gets a score combining four factors — no single one can dominate:
+You open the fridge, see a handful of ingredients, and wonder what you can actually cook tonight. We wanted an answer that only suggests dishes you can **mostly make right now** — and that is **honest about how confident it is**.
 
-- **Coverage** — what fraction of the recipe you already have (weighted most heavily)
-- **True overlap** — bigger genuine matches beat small "technically complete" ones
-- **Flavor fit** — how well the recipe's LDA topic matches your pantry's flavor profile
-- **Smoothed rating** — Bayesian-shrunk so one lucky 5-star review can't top the list
+Most recipe recommenders assume you already know what you have. We flip that: snap a photo, detect what's there, and let the model figure out what fits. The challenge is that everything is uncertain — detection is imperfect, your pantry is incomplete, ratings are noisy. That's exactly what Bayesian methods are built for.
+
+The trick is to treat cooking like language: a **recipe is a document**, an **ingredient is a word**, and a **cuisine or flavor is a hidden theme**. LDA discovers those flavor themes on its own from 53,573 real recipes — one theme leans on olive oil, basil and parmesan; another on flour, sugar and eggs. Your ingredients tell us which theme fits your pantry, and the model uses that to rank what you can cook tonight.
+
+## Ranking recipes
+
+Every recipe gets a score that blends four factors, so no single one can win on its own:
+
+- **Can you make it?** How much of the recipe you already have — this counts the most.
+- **Real overlap, not technicalities.** A 3-ingredient recipe shouldn't win just because you happen to have all three.
+- **Flavor fit.** Does the recipe's theme match the flavor profile your ingredients suggest?
+- **A rating you can trust.** Ratings are Bayesian-smoothed toward the global average, so one lucky 5-star review can't top the list.
+
+You can also filter by **vegetarian / vegan**, force a **must-use** ingredient, or dial up **diversity** so the results aren't five variations of the same dish.
 
 ---
 
