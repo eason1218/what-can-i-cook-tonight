@@ -22,7 +22,10 @@ Bayesian Methods Final Project — by **Qixin Cui**, **Kevin Fan**, **Yizhuo Li*
 - [Architecture](#architecture)
 - [The idea](#the-idea)
 - [Ranking recipes](#ranking-recipes)
-- [How sure is it?](#how-sure-is-it)
+- [Methodology](#-methodology)
+  - [Stage 1 · Data](#stage-1--data)
+  - [Stage 2 · Detection](#stage-2--detection)
+  - [Stage 3 · Recommender](#stage-3--recommender)
 - [Project structure](#project-structure)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -97,9 +100,77 @@ Every recipe you could make gets a score that blends four common-sense factors, 
 
 On top of that you can ask for **vegetarian / vegan** only, force a **must-use** ingredient, or turn up **diversity** so the list isn't five variations of the same dish.
 
-## How sure is it?
+That's the intuition. The **[Methodology](#-methodology)** section below makes it precise — and covers the data and detection stages too.
 
-This is the Bayesian heart. From your handful of ingredients we infer a **flavor profile** — and, crucially, *how sure* we are of it. A focused pantry (clearly Italian) gives a confident, single-theme profile; a vague one (could be baking, could be breakfast) spreads across themes. That confidence then rides along into the recommendations.
+---
+
+# 🔬 Methodology
+
+> A recipe is a **document**, an ingredient is a **word**, and a cuisine or flavor is a latent
+> **topic** — so we model the corpus with **Latent Dirichlet Allocation (LDA)** and turn the learned
+> flavor topics into recommendations *that carry their own uncertainty*.
+
+The pipeline is three stages, and each makes one deliberate methodological choice. This is the
+precise version of [How it works](#the-idea); the per-stage deep dives live in
+**[`yolo/README.md`](yolo/README.md)** and **[`model/README.md`](model/README.md)**.
+
+## Stage 1 · Data
+
+We build the corpus from the public [Food.com](https://www.kaggle.com/datasets/shuyangli94/food-com-recipes-and-user-interactions)
+dump (`RAW_recipes.csv` + `RAW_interactions.csv`) in [`data/prepare_data.py`](data/prepare_data.py):
+
+1. **Aggregate ratings** per recipe from the interactions file (streamed in chunks): a count
+   `n_ratings` and a weighted mean `avg_rating`.
+2. **Filter for signal** — keep recipes with **≥ 5 ratings** and **2–35 ingredients** (drop the
+   noise of one-liners and outliers). **53,573** recipes survive.
+3. **Canonicalize ingredients** — the methodological keystone. Free-text ingredient phrases are
+   lowercased, de-punctuated, stripped of generic modifiers (`fresh`, `ground`, `large`, …) and
+   singularized (`tomatoes → tomato`). The **same** `normalize_token` runs at data-prep time *and*
+   at query time, so the set-intersection that powers *coverage* (Stage 3) compares like with like.
+
+Output schema: `recipe_id, recipe_name, ingredients (JSON list), avg_rating, n_ratings`.
+
+## Stage 2 · Detection
+
+A custom **YOLOv5** detector (95 ingredient classes; the class vocabulary — *wakame, napa cabbage,
+kimchi, enoki / oyster / shiitake mushrooms, somen / udon / ramen* — is an Asian fridge-staples set)
+reads the photo. At inference ([`yolo/detect.py`](yolo/detect.py)) we run non-max suppression, keep
+the **highest-confidence box per class** above a confidence threshold (default `0.25`), and return
+`(label, confidence)` pairs.
+
+Detector labels (`Cherry_tomatoes`, `Green_bell_pepper`) are not recipe tokens, so
+[`yolo/build_mapping.py`](yolo/build_mapping.py) precomputes a **label → ingredient map** against the
+*actual* normalized vocabulary of the corpus, via a deterministic cascade:
+**exact match → head-noun → fuzzy (RapidFuzz `WRatio ≥ 90`) → leave unmapped**. 93 of the 95 classes
+map (to 87 distinct ingredients). Because the targets are drawn from the recipe vocabulary, a
+detected ingredient is guaranteed to line up with coverage. Full method, examples, and the honest
+mapping artifacts: **[`yolo/README.md`](yolo/README.md)**.
+
+## Stage 3 · Recommender
+
+**The generative story.** Each recipe `m` has a topic mixture `θ_m ~ Dir(α)`; each topic `k` is a
+distribution over ingredients `φ_k ~ Dir(β)`; every ingredient is drawn from one of the recipe's
+topics. We use sparse symmetric priors `α = 0.1` (few topics per recipe) and `β = 0.01` (few
+ingredients per topic), so the learned topics stay crisp and readable.
+
+**The scale trade-off (honest Bayesian).** A fully-Bayesian NUTS posterior over `φ` does not scale
+past a few hundred recipes, so we fit `φ` as a **point estimate** `φ̂` with scikit-learn's variational
+LDA on the **full 53,573-recipe corpus** (~25 s), and approximate `φ`'s uncertainty by **Bootstrap**:
+refit **B = 50×** on resampled recipes (m-out-of-n, `m ≈ 10k`), each **warm-started** from `φ̂`. LDA
+topics are exchangeable, so each refit comes back label-switched — we undo that with the **Hungarian
+algorithm** on cosine similarity, giving `B` comparable pseudo-samples `phi_samples[:, k, :]`.
+
+**Where the Bayes actually lands.** The genuinely uncertain, genuinely Bayesian quantity is the
+**user's flavor posterior** — inferred from your handful of ingredients by Bayes' theorem, evaluated
+*per `φ`-sample* so uncertainty flows all the way to the ranking:
+
+```math
+P(\text{topic}=k \mid \text{ingredients}) \;\propto\; \Big(\textstyle\prod_{i}\varphi_{k,i}\Big)\;P(\text{topic}=k)
+```
+
+A focused pantry (clearly Italian) collapses onto one topic; an ambiguous one (could be baking,
+could be breakfast) spreads across two. The *same* routine profiles each recipe, and the recipe and
+user posteriors are then compared draw-by-draw.
 
 <table>
 <tr>
@@ -107,12 +178,34 @@ This is the Bayesian heart. From your handful of ingredients we infer a **flavor
 <td width="50%"><img src="model/figures/fig1_model_selection.png" width="100%"></td>
 </tr>
 <tr>
-<td align="center"><sub>A clearly-Italian pantry lands on one flavor theme (confident); a baker's pantry splits across two (uncertain).</sub></td>
-<td align="center"><sub>The data favors just a few broad flavor themes — more isn't better here, and we don't pretend otherwise.</sub></td>
+<td align="center"><sub><b>The Bayesian step (Step 3).</b> P(topic | pantry): a clearly-Italian pantry lands on one flavor theme (confident); a baker's pantry splits across two (uncertain).</sub></td>
+<td align="center"><sub><b>Model selection (Step 1).</b> Held-out perplexity is monotone in K — the data favors a few broad themes, so K = 4 is the honest default.</sub></td>
 </tr>
 </table>
 
-Want the full technical story — the math, the design choices, every figure? It's in **[`model/README.md`](model/README.md)**.
+**The five steps** (`model/src/recipe_recommender.py`):
+
+| # | function | what it does |
+|:-:|----------|--------------|
+| 1 | `train_lda` | point-estimate `φ̂` on the full corpus + Bootstrap pseudo-posterior (Hungarian-aligned); pick `K` by held-out perplexity |
+| 2 | `filter_candidates` | keep recipes you can mostly make — *coverage* (the share of a recipe's ingredients you have) ≥ 0.7, relaxing to 0.5 if too few survive |
+| 3 | `infer_user_posterior` | Bayes' theorem **per `φ`-sample** → a flavor profile that keeps its uncertainty |
+| 4 | `score_recipes` | the composite score below, computed per sample then averaged |
+| 5 | `recommend` | Top-N, with `diet` / `must_use` / `exclude` / `diversity` (MMR) options |
+
+**The ranking score** — four factors, each fixing one concrete failure mode:
+
+```math
+\text{score}=\underbrace{\text{coverage}^{2}}_{\text{can you make it?}}\cdot\underbrace{\big(1-e^{-|U\cap R|/\tau}\big)}_{\text{absolute overlap, }\tau=4}\cdot\underbrace{e^{-\mathrm{KL}(\text{recipe}\,\|\,\text{user})}}_{\text{flavor alignment}}\cdot\underbrace{\tfrac{\bar r\,n+\mu\kappa}{n+\kappa}}_{\text{Bayes-shrunk rating, }\kappa=5}
+```
+
+**Honest caveats.** *(1)* On 53k recipes `φ` is *very* well determined, so its Bootstrap spread is
+tiny (per-element std ≈ `5e-4`) — we report that as resampling **stability**, not posterior width,
+and `posterior_uncertainty` in the output is ≈ 0. The uncertainty that matters lives on the *user*
+side, and it behaves. *(2)* Held-out perplexity is **monotone in `K`** on this corpus (289 → 447
+across `K ∈ {4, 6, 8, 10, 12}`), so the data honestly favors few, coarse topics — we default to
+`K = 4` and keep it overridable. Recommendations are robust to `K` because coverage and rating
+dominate the score. Full derivations and all four figures: **[`model/README.md`](model/README.md)**.
 
 ---
 
