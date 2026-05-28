@@ -99,9 +99,9 @@ body, .gradio-container {
 }
 
 .gradio-container {
-  max-width: 1260px;
-  margin: 0 auto;
-  padding: 18px 18px 40px;
+  max-width: 100%;
+  margin: 0;
+  padding: 18px 24px 40px;
 }
 
 /* ── Hero ─────────────────────────────── */
