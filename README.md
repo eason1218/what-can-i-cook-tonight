@@ -111,7 +111,7 @@ That's the intuition. The **[Methodology](#-methodology)** section below makes i
 > flavor topics into recommendations *that carry their own uncertainty*.
 
 The pipeline is three stages, and each makes one deliberate methodological choice. This is the
-precise version of [How it works](#the-idea); the per-stage deep dives live in
+reasoning behind [How it works](#the-idea); the per-stage deep dives (with the math) live in
 **[`yolo/README.md`](yolo/README.md)** and **[`model/README.md`](model/README.md)**.
 
 ## Stage 1 · Data
@@ -148,29 +148,42 @@ mapping artifacts: **[`yolo/README.md`](yolo/README.md)**.
 
 ## Stage 3 · Recommender
 
-**The generative story.** Each recipe `m` has a topic mixture `θ_m ~ Dir(α)`; each topic `k` is a
-distribution over ingredients `φ_k ~ Dir(β)`; every ingredient is drawn from one of the recipe's
-topics. We use sparse symmetric priors `α = 0.1` (few topics per recipe) and `β = 0.01` (few
-ingredients per topic), so the learned topics stay crisp and readable.
+The recommender rests on two modelling choices — **LDA** and a **Bayesian** treatment of it. Here's
+*why* each one, in plain terms. The equations and the step-by-step pipeline live in
+**[`model/README.md`](model/README.md)**.
 
-**The scale trade-off (honest Bayesian).** A fully-Bayesian NUTS posterior over `φ` does not scale
-past a few hundred recipes, so we fit `φ` as a **point estimate** `φ̂` with scikit-learn's variational
-LDA on the **full 53,573-recipe corpus** (~25 s), and approximate `φ`'s uncertainty by **Bootstrap**:
-refit **B = 50×** on resampled recipes (m-out-of-n, `m ≈ 10k`), each **warm-started** from `φ̂`. LDA
-topics are exchangeable, so each refit comes back label-switched — we undo that with the **Hungarian
-algorithm** on cosine similarity, giving `B` comparable pseudo-samples `phi_samples[:, k, :]`.
+### Why LDA?
 
-**Where the Bayes actually lands.** The genuinely uncertain, genuinely Bayesian quantity is the
-**user's flavor posterior** — inferred from your handful of ingredients by Bayes' theorem, evaluated
-*per `φ`-sample* so uncertainty flows all the way to the ranking:
+We read cooking like language — a recipe is a *document*, an ingredient is a *word*, and a cuisine
+or flavor is a hidden *theme* (see [The idea](#the-idea)). Given that framing, a topic model like
+LDA is the natural fit, for three reasons:
 
-```math
-P(\text{topic}=k \mid \text{ingredients}) \;\propto\; \Big(\textstyle\prod_{i}\varphi_{k,i}\Big)\;P(\text{topic}=k)
-```
+- **It finds flavor themes on its own.** Nobody hand-labels recipes as "Italian" or "baking"; LDA
+  discovers the themes from which ingredients tend to show up together — one leans on olive oil,
+  basil and parmesan, another on flour, sugar and eggs.
+- **It allows blends, not boxes.** A dish isn't forced into a single cuisine — it can be mostly
+  Italian with a hint of comfort food. That soft, mixed membership matches how real recipes taste,
+  where a hard one-label classifier would distort them.
+- **It stays readable.** Each theme is just its top ingredients, so you can *see* what the model
+  learned — unlike an opaque neural embedding. And it compresses thousands of sparse ingredients into
+  a handful of meaningful flavor dimensions, which turns "does this recipe match my pantry?" into a
+  real flavor question instead of brittle word-overlap.
 
-A focused pantry (clearly Italian) collapses onto one topic; an ambiguous one (could be baking,
-could be breakfast) spreads across two. The *same* routine profiles each recipe, and the recipe and
-user posteriors are then compared draw-by-draw.
+### Why Bayesian?
+
+Because the goal isn't only *which* recipes — it's *how sure we are*. A recommender that is
+confidently wrong is worse than one that admits when it's guessing.
+
+- **Your pantry is genuinely uncertain evidence.** From a few ingredients we infer a flavor profile,
+  and how sharp or fuzzy that profile is *is* the answer: a clearly-Italian pantry settles on one
+  theme (confident); a vague one — could be baking, could be breakfast — spreads across several
+  (uncertain). A Bayesian posterior captures that for free; a single best guess would hide it.
+- **It balances prior knowledge against your evidence.** With little to go on, the model leans on
+  what's common across all 53k recipes; the more ingredients you add, the more they take over. The
+  same instinct keeps ratings honest — a dish with one lucky 5-star vote is pulled toward the
+  average, so it can't out-rank a dish trusted by hundreds.
+- **The doubt reaches the final list.** Uncertainty isn't computed and thrown away — it travels all
+  the way into the ranking, so every recommendation can report how confident it is.
 
 <table>
 <tr>
@@ -178,34 +191,10 @@ user posteriors are then compared draw-by-draw.
 <td width="50%"><img src="model/figures/fig1_model_selection.png" width="100%"></td>
 </tr>
 <tr>
-<td align="center"><sub><b>The Bayesian step (Step 3).</b> P(topic | pantry): a clearly-Italian pantry lands on one flavor theme (confident); a baker's pantry splits across two (uncertain).</sub></td>
-<td align="center"><sub><b>Model selection (Step 1).</b> Held-out perplexity is monotone in K — the data favors a few broad themes, so K = 4 is the honest default.</sub></td>
+<td align="center"><sub><b>Why Bayesian, in one picture.</b> What the model believes about your pantry's flavor: a clearly-Italian pantry lands on one theme (confident); a baker's pantry splits across two (uncertain).</sub></td>
+<td align="center"><sub><b>Why a few broad themes.</b> The data favors a small number of coarse flavor themes, so the model stays readable on purpose rather than chasing many fine-grained ones.</sub></td>
 </tr>
 </table>
-
-**The five steps** (`model/src/recipe_recommender.py`):
-
-| # | function | what it does |
-|:-:|----------|--------------|
-| 1 | `train_lda` | point-estimate `φ̂` on the full corpus + Bootstrap pseudo-posterior (Hungarian-aligned); pick `K` by held-out perplexity |
-| 2 | `filter_candidates` | keep recipes you can mostly make — *coverage* (the share of a recipe's ingredients you have) ≥ 0.7, relaxing to 0.5 if too few survive |
-| 3 | `infer_user_posterior` | Bayes' theorem **per `φ`-sample** → a flavor profile that keeps its uncertainty |
-| 4 | `score_recipes` | the composite score below, computed per sample then averaged |
-| 5 | `recommend` | Top-N, with `diet` / `must_use` / `exclude` / `diversity` (MMR) options |
-
-**The ranking score** — four factors, each fixing one concrete failure mode:
-
-```math
-\text{score}=\underbrace{\text{coverage}^{2}}_{\text{can you make it?}}\cdot\underbrace{\big(1-e^{-|U\cap R|/\tau}\big)}_{\text{absolute overlap, }\tau=4}\cdot\underbrace{e^{-\mathrm{KL}(\text{recipe}\,\|\,\text{user})}}_{\text{flavor alignment}}\cdot\underbrace{\tfrac{\bar r\,n+\mu\kappa}{n+\kappa}}_{\text{Bayes-shrunk rating, }\kappa=5}
-```
-
-**Honest caveats.** *(1)* On 53k recipes `φ` is *very* well determined, so its Bootstrap spread is
-tiny (per-element std ≈ `5e-4`) — we report that as resampling **stability**, not posterior width,
-and `posterior_uncertainty` in the output is ≈ 0. The uncertainty that matters lives on the *user*
-side, and it behaves. *(2)* Held-out perplexity is **monotone in `K`** on this corpus (289 → 447
-across `K ∈ {4, 6, 8, 10, 12}`), so the data honestly favors few, coarse topics — we default to
-`K = 4` and keep it overridable. Recommendations are robust to `K` because coverage and rating
-dominate the score. Full derivations and all four figures: **[`model/README.md`](model/README.md)**.
 
 ---
 
